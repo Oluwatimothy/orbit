@@ -98,7 +98,6 @@ export function CreateCollectionPage() {
               setValue("slug", v, { shouldValidate: true });
             }}
             error={formState.errors.slug?.message}
-            suffixes={["nft"]}
           />
         </FormSection>
         <FormSection

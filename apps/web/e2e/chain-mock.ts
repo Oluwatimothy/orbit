@@ -1,10 +1,8 @@
 import type { Page, Route } from "@playwright/test";
 
-/** A connected launch as the factory, token, NFT and claim contracts would report it. */
+/** A connected launch as the factory and its launch contract would report it. */
 const FACTORY = "e2e-factory.testnet";
-const TOKEN = "genesis-ft.e2e-factory.testnet";
-const NFT = "genesis-nft.e2e-factory.testnet";
-const CLAIM = "genesis-claim.e2e-factory.testnet";
+const GENESIS = "genesis.e2e-factory.testnet";
 const E18 = 10n ** 18n;
 
 export const LAUNCH = {
@@ -18,9 +16,10 @@ export const LAUNCH = {
   creator: "creator.testnet",
   created_at_ns: String(BigInt(Date.now() - 3_600_000) * 1_000_000n),
   status: "live",
-  token: TOKEN,
-  nft: NFT,
-  claim: CLAIM,
+  account: GENESIS,
+  token: GENESIS,
+  nft: GENESIS,
+  claim: GENESIS,
   sale: null,
 };
 
@@ -30,19 +29,17 @@ const VIEWS: Record<string, Record<string, unknown>> = {
     get_launches: [LAUNCH],
     get_launch: LAUNCH,
     get_launches_by_creator: [LAUNCH],
-    quote_deposit: "780000000000000000000000",
+    quote_deposit: "4366000000000000000000000",
     is_slug_available: true,
   },
-  [TOKEN]: {
+  [GENESIS]: {
     ft_metadata: { spec: "ft-1.0.0", name: "Orbit Genesis", symbol: "ORBIT", icon: null, decimals: 18 },
     ft_total_supply: String(10_000_000n * E18),
     orbit_allocations: [
       { account_id: "creator.testnet", amount: String(8_000_000n * E18), label: "Creator" },
-      { account_id: CLAIM, amount: String(2_000_000n * E18), label: "NFT holders" },
+      { account_id: GENESIS, amount: String(2_000_000n * E18), label: "NFT holder claims" },
     ],
     ft_balance_of: "0",
-  },
-  [NFT]: {
     orbit_config: {
       name: "Orbit Genesis",
       symbol: "GEN",
@@ -72,18 +69,14 @@ const VIEWS: Record<string, Record<string, unknown>> = {
     ],
     nft_tokens_for_owner: [],
     orbit_minted_by: 0,
-  },
-  [CLAIM]: {
-    get_info: {
-      token_id: TOKEN,
-      nft_id: NFT,
+    claim_info: {
+      token_id: GENESIS,
+      nft_id: GENESIS,
       creator_id: "creator.testnet",
       tiers: [{ name: "Genesis", from: 1, to: 2000, amount_per_nft: String(1_000n * E18) }],
       starts_at_ns: "0",
-      status: "active",
       total_reserved: String(2_000_000n * E18),
       claimed_total: String(1_000n * E18),
-      pending_total: "0",
       claims_count: 1,
     },
   },

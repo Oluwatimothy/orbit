@@ -1,7 +1,7 @@
 [package]
-name = "orbit-nft-collection"
-description = "NEP-171 NFT collection with on-chain mint rules, deployed by the Orbit launch factory"
-version = "0.1.0"
+name = "orbit-launch"
+description = "One Orbit launch: NEP-141 token, NEP-171 collection, holder claims and NFT-gated sale in a single contract"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,4 +17,3 @@ orbit-common.workspace = true
 
 [dev-dependencies]
 near-sdk = { workspace = true, features = ["unit-testing"] }
-

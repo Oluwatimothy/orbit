@@ -18,11 +18,8 @@ const FAR_FUTURE_NS: u64 = 4_000_000_000_000_000_000;
 
 /// `public_starts_at_ns: Some(..)` with a time in the past puts the sale straight into its public window.
 async fn create_sale_launch(env: &Env, slug: &str, public: Option<(u64, u128)>) -> Result<()> {
-    let sale_account = launch_account(env, slug, "sale");
-    let deposit = quote(
-        &view(&env.worker, env.factory.id().as_str(), "quote_deposit", json!({ "kind": "connected" }))
-            .await?,
-    )?;
+    let sale_account = launch_account(env, slug);
+    let deposit = quote_for(env, "connected").await?;
     let (holder_start, public_start, public_limit) = match public {
         Some((start, limit)) => (1u64, Value::from(start.to_string()), Value::from(limit.to_string())),
         None => (0, Value::Null, Value::Null),
@@ -67,7 +64,7 @@ async fn create_sale_launch(env: &Env, slug: &str, public: Option<(u64, u128)>) 
 }
 
 async fn buy(who: &Account, sale: &str, amount: u128, nft: Option<&str>) -> Result<ExecutionFinalResult> {
-    // Price for `amount` plus a 0.01 NEAR margin covering token registration; the rest is refunded.
+    // Price for `amount` plus a 0.01 NEAR margin covering storage; the rest is refunded.
     let cost = PRICE.as_yoctonear() * (amount / TOKEN);
     Ok(who
         .call(&sale.parse()?, "buy")
@@ -82,13 +79,10 @@ async fn buy(who: &Account, sale: &str, amount: u128, nft: Option<&str>) -> Resu
 async fn holder_window_is_enforced_by_ownership() -> Result<()> {
     let env = setup().await?;
     create_sale_launch(&env, "gated", None).await?;
-    let (ft, nft, sale) = (
-        launch_account(&env, "gated", "ft"),
-        launch_account(&env, "gated", "nft"),
-        launch_account(&env, "gated", "sale"),
-    );
+    let launch = launch_account(&env, "gated");
+    let (ft, nft, sale) = (&launch, &launch, &launch);
     let w = &env.worker;
-    let info = view(w, &sale, "get_info", json!({})).await?;
+    let info = view(w, sale, "sale_info", json!({})).await?;
     assert_eq!((info["status"].as_str(), info["phase"].as_str()), (Some("active"), Some("holders")));
 
     let mint = env
@@ -103,39 +97,38 @@ async fn holder_window_is_enforced_by_ownership() -> Result<()> {
 
     // Alice buys 4 tokens against NFT #1; the creator receives exactly the price.
     let creator_before = env.creator.view_account().await?.balance;
-    let result = buy(&env.alice, &sale, 4 * TOKEN, Some("1")).await?;
+    let result = buy(&env.alice, sale, 4 * TOKEN, Some("1")).await?;
     expect_success(&result)?;
-    assert!(result.json::<bool>()?);
-    assert_eq!(ft_balance(w, &ft, env.alice.id().as_str()).await?, 4 * TOKEN);
+    assert_eq!(result.json::<String>()?, PRICE.saturating_mul(4).as_yoctonear().to_string());
+    assert_eq!(ft_balance(w, ft, env.alice.id().as_str()).await?, 4 * TOKEN);
     let received = env.creator.view_account().await?.balance.saturating_sub(creator_before);
     assert!(
         received >= PRICE.saturating_mul(4)
             && received < PRICE.saturating_mul(4).saturating_add(NearToken::from_millinear(20))
     );
 
-    // Bob does not own NFT #1: rolled back, nothing delivered, limit untouched.
-    let not_owner = buy(&env.bob, &sale, TOKEN, Some("1")).await?;
-    expect_success(&not_owner)?;
-    assert!(!not_owner.json::<bool>()?);
-    assert_eq!(ft_balance(w, &ft, env.bob.id().as_str()).await?, 0);
+    // Bob does not own NFT #1: rejected, nothing delivered, limit untouched.
+    let not_owner = buy(&env.bob, sale, TOKEN, Some("1")).await?;
+    assert!(failure_text(&not_owner).contains("you do not own this NFT"));
+    assert_eq!(ft_balance(w, ft, env.bob.id().as_str()).await?, 0);
     assert_eq!(
-        view(w, &sale, "get_purchased_by_nft", json!({ "nft_token_id": "1" })).await?,
+        view(w, sale, "sale_purchased_by_nft", json!({ "nft_token_id": "1" })).await?,
         json!((4 * TOKEN).to_string())
     );
 
     // Per-NFT limit and the NFT requirement.
-    let over = buy(&env.alice, &sale, 7 * TOKEN, Some("1")).await?;
+    let over = buy(&env.alice, sale, 7 * TOKEN, Some("1")).await?;
     assert!(
         failure_text(&over).contains("can buy at most 6000000000000000000 more"),
         "{}",
         failure_text(&over)
     );
-    let no_nft = buy(&env.alice, &sale, TOKEN, None).await?;
+    let no_nft = buy(&env.alice, sale, TOKEN, None).await?;
     assert!(failure_text(&no_nft).contains("requires an NFT ID"));
 
-    let info = view(w, &sale, "get_info", json!({})).await?;
-    assert_eq!((info["sold"].clone(), info["pending"].clone()), (json!((4 * TOKEN).to_string()), json!("0")));
-    assert_eq!(ft_balance(w, &ft, &sale).await?, FOR_SALE - 4 * TOKEN);
+    let info = view(w, sale, "sale_info", json!({})).await?;
+    assert_eq!(info["sold"], json!((4 * TOKEN).to_string()));
+    assert_eq!(ft_balance(w, ft, sale).await?, FOR_SALE - 4 * TOKEN);
     Ok(())
 }
 
@@ -143,13 +136,14 @@ async fn holder_window_is_enforced_by_ownership() -> Result<()> {
 async fn public_window_limits_each_account() -> Result<()> {
     let env = setup().await?;
     create_sale_launch(&env, "open", Some((2, 5 * TOKEN))).await?;
-    let (ft, sale) = (launch_account(&env, "open", "ft"), launch_account(&env, "open", "sale"));
-    let info = view(&env.worker, &sale, "get_info", json!({})).await?;
+    let launch = launch_account(&env, "open");
+    let (ft, sale) = (&launch, &launch);
+    let info = view(&env.worker, sale, "sale_info", json!({})).await?;
     assert_eq!(info["phase"], "public");
 
-    expect_success(&buy(&env.bob, &sale, 5 * TOKEN, None).await?)?;
-    assert_eq!(ft_balance(&env.worker, &ft, env.bob.id().as_str()).await?, 5 * TOKEN);
-    let over = buy(&env.bob, &sale, TOKEN, None).await?;
+    expect_success(&buy(&env.bob, sale, 5 * TOKEN, None).await?)?;
+    assert_eq!(ft_balance(&env.worker, ft, env.bob.id().as_str()).await?, 5 * TOKEN);
+    let over = buy(&env.bob, sale, TOKEN, None).await?;
     assert!(failure_text(&over).contains("this account can buy at most 0 more"));
 
     let underpaid = env
@@ -160,6 +154,6 @@ async fn public_window_limits_each_account() -> Result<()> {
         .gas(MAX_GAS)
         .transact()
         .await?;
-    assert!(failure_text(&underpaid).contains("attach at least"));
+    assert!(failure_text(&underpaid).contains("is less than the required"), "{}", failure_text(&underpaid));
     Ok(())
 }

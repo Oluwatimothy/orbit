@@ -22,9 +22,10 @@ Each phase ends with a progress report (completed / verified / outstanding / dec
 | 5 Discovery and portfolio | Done |
 | 6 Security and quality review | Done: adversarial contract review, every confirmed finding fixed or disclosed, client-secret check, Playwright suite |
 | 7 Deployment | Scripts and docs ready; deployment itself is the project owner's step |
+| 7a Cost redesign (D-026) | Done: one launch contract per launch, deployed from a template the factory stores. Running Orbit costs about 7 NEAR instead of about 96 |
 
 Evidence:
-- **Contracts:** 102 unit tests and 9 sandbox tests; clippy runs with warnings as errors.
+- **Contracts:** 108 unit tests and 11 sandbox tests; clippy runs with warnings as errors.
 - **Web:** 52 unit tests and 18 Playwright tests; typecheck, lint, production build and the secret check all pass.
 
 ## Phase 1 — Foundation

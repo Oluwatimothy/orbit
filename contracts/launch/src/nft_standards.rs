@@ -13,7 +13,8 @@ use near_contract_standards::non_fungible_token::{Token, TokenId};
 use near_sdk::json_types::U128;
 use near_sdk::{env, near, AccountId, Promise, PromiseOrValue};
 
-use crate::{Contract, ContractExt};
+use crate::collection::NAME;
+use crate::{part, part_mut, Contract, ContractExt};
 
 #[near]
 impl NonFungibleTokenCore for Contract {
@@ -25,7 +26,7 @@ impl NonFungibleTokenCore for Contract {
         approval_id: Option<u64>,
         memo: Option<String>,
     ) {
-        self.tokens.nft_transfer(receiver_id, token_id, approval_id, memo)
+        part_mut(&mut self.collection, NAME).tokens.nft_transfer(receiver_id, token_id, approval_id, memo)
     }
 
     #[payable]
@@ -37,11 +38,17 @@ impl NonFungibleTokenCore for Contract {
         memo: Option<String>,
         msg: String,
     ) -> PromiseOrValue<bool> {
-        self.tokens.nft_transfer_call(receiver_id, token_id, approval_id, memo, msg)
+        part_mut(&mut self.collection, NAME).tokens.nft_transfer_call(
+            receiver_id,
+            token_id,
+            approval_id,
+            memo,
+            msg,
+        )
     }
 
     fn nft_token(&self, token_id: TokenId) -> Option<Token> {
-        self.tokens.nft_token(token_id)
+        part(&self.collection, NAME).tokens.nft_token(token_id)
     }
 }
 
@@ -55,7 +62,12 @@ impl NonFungibleTokenResolver for Contract {
         token_id: TokenId,
         approved_account_ids: Option<HashMap<AccountId, u64>>,
     ) -> bool {
-        self.tokens.nft_resolve_transfer(previous_owner_id, receiver_id, token_id, approved_account_ids)
+        part_mut(&mut self.collection, NAME).tokens.nft_resolve_transfer(
+            previous_owner_id,
+            receiver_id,
+            token_id,
+            approved_account_ids,
+        )
     }
 }
 
@@ -68,17 +80,17 @@ impl NonFungibleTokenApproval for Contract {
         account_id: AccountId,
         msg: Option<String>,
     ) -> Option<Promise> {
-        self.tokens.nft_approve(token_id, account_id, msg)
+        part_mut(&mut self.collection, NAME).tokens.nft_approve(token_id, account_id, msg)
     }
 
     #[payable]
     fn nft_revoke(&mut self, token_id: TokenId, account_id: AccountId) {
-        self.tokens.nft_revoke(token_id, account_id)
+        part_mut(&mut self.collection, NAME).tokens.nft_revoke(token_id, account_id)
     }
 
     #[payable]
     fn nft_revoke_all(&mut self, token_id: TokenId) {
-        self.tokens.nft_revoke_all(token_id)
+        part_mut(&mut self.collection, NAME).tokens.nft_revoke_all(token_id)
     }
 
     fn nft_is_approved(
@@ -87,22 +99,22 @@ impl NonFungibleTokenApproval for Contract {
         approved_account_id: AccountId,
         approval_id: Option<u64>,
     ) -> bool {
-        self.tokens.nft_is_approved(token_id, approved_account_id, approval_id)
+        part(&self.collection, NAME).tokens.nft_is_approved(token_id, approved_account_id, approval_id)
     }
 }
 
 #[near]
 impl NonFungibleTokenEnumeration for Contract {
     fn nft_total_supply(&self) -> U128 {
-        self.tokens.nft_total_supply()
+        part(&self.collection, NAME).tokens.nft_total_supply()
     }
 
     fn nft_tokens(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<Token> {
-        self.tokens.nft_tokens(from_index, limit)
+        part(&self.collection, NAME).tokens.nft_tokens(from_index, limit)
     }
 
     fn nft_supply_for_owner(&self, account_id: AccountId) -> U128 {
-        self.tokens.nft_supply_for_owner(account_id)
+        part(&self.collection, NAME).tokens.nft_supply_for_owner(account_id)
     }
 
     fn nft_tokens_for_owner(
@@ -111,13 +123,17 @@ impl NonFungibleTokenEnumeration for Contract {
         from_index: Option<U128>,
         limit: Option<u64>,
     ) -> Vec<Token> {
-        self.tokens.nft_tokens_for_owner(account_id, from_index, limit)
+        part(&self.collection, NAME).tokens.nft_tokens_for_owner(account_id, from_index, limit)
     }
 }
 
 #[near]
 impl NonFungibleTokenMetadataProvider for Contract {
     fn nft_metadata(&self) -> NFTContractMetadata {
-        self.metadata.get().clone().unwrap_or_else(|| env::panic_str("metadata missing"))
+        part(&self.collection, NAME)
+            .metadata
+            .get()
+            .clone()
+            .unwrap_or_else(|| env::panic_str("metadata missing"))
     }
 }

@@ -2488,15 +2488,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "orbit-claim"
-version = "0.1.0"
-dependencies = [
- "near-contract-standards",
- "near-sdk",
- "orbit-common",
-]
-
-[[package]]
 name = "orbit-common"
 version = "0.1.0"
 dependencies = [
@@ -2506,15 +2497,6 @@ dependencies = [
 
 [[package]]
 name = "orbit-factory"
-version = "0.1.0"
-dependencies = [
- "near-contract-standards",
- "near-sdk",
- "orbit-common",
-]
-
-[[package]]
-name = "orbit-fungible-token"
 version = "0.1.0"
 dependencies = [
  "near-contract-standards",
@@ -2535,28 +2517,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "orbit-nft-collection"
-version = "0.1.0"
+name = "orbit-launch"
+version = "0.2.0"
 dependencies = [
  "near-contract-standards",
  "near-sdk",
  "orbit-common",
-]
-
-[[package]]
-name = "orbit-sale"
-version = "0.1.0"
-dependencies = [
- "near-contract-standards",
- "near-sdk",
- "orbit-common",
-]
-
-[[package]]
-name = "orbit-test-global-publisher"
-version = "0.1.0"
-dependencies = [
- "near-sdk",
 ]
 
 [[package]]

@@ -10,7 +10,10 @@ export const MAX_GAS = 300n * 10n ** 12n;
 const CLAIM_GAS = 150n * 10n ** 12n;
 const MINT_GAS = 100n * 10n ** 12n;
 
-/** Mirrors `CLAIM_DEPOSIT` in contracts/claim. */
+/**
+ * Attached to a claim. The contract keeps only the storage the claim adds
+ * (token registration and the claim record, about 0.003 NEAR) and refunds the rest.
+ */
 export const CLAIM_DEPOSIT = parseUnits("0.005", YOCTO_DECIMALS);
 /**
  * Storage allowance per minted NFT (2,000 bytes). Measured in the sandbox at
@@ -45,7 +48,10 @@ export function claimTx(claimId: string, nftTokenId: string): TransactionRequest
   return call(claimId, "claim", { nft_token_id: nftTokenId }, CLAIM_DEPOSIT, CLAIM_GAS);
 }
 
-/** Mirrors `MIN_PURCHASE_DEPOSIT` in contracts/sale: covers token registration; excess refunded. */
+/**
+ * Attached on top of a purchase's cost. The contract keeps only the storage
+ * the purchase adds (token registration and the purchase record); the rest is refunded.
+ */
 export const PURCHASE_MARGIN = parseUnits("0.005", YOCTO_DECIMALS);
 const BUY_GAS = 150n * 10n ** 12n;
 

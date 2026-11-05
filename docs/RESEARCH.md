@@ -59,6 +59,8 @@ Standards coverage in `near-contract-standards` 5.30.0:
 
 ### Factory deployment: global contracts (NEP-591)
 
+> **Later decision:** Orbit no longer uses global contracts. Publishing burns 0.0001 NEAR per byte, about 91 NEAR for the original four templates, which was more than the project could fund. Launches now deploy a template the factory stores (D-026). The research below is kept as the record of the option.
+
 Global contracts are live on testnet and mainnet (`global_contract_host_fns: true`, nearcore ≥ 2.6.0). Code is published once and accounts reference it by hash or by publishing account. `near-sdk` 5.30.0 exposes `Promise::deploy_global_contract`, `deploy_global_contract_by_account_id`, `use_global_contract(code_hash)` and `use_global_contract_by_account_id(account_id)`. The official example `examples/factory-contract-global` chains `create_account().transfer().use_global_contract(hash)`.
 
 Cost: publishing burns 0.0001 NEAR/byte (≈ 10 NEAR per 100 kB, not recoverable). Each account that uses it stores only a reference (< 0.001 NEAR). The classic alternative — embedding wasm with `include_bytes!` and `deploy_contract` — stores a full copy of the code in every launch account (≈ 1–3 NEAR of storage each) and bloats the factory.

@@ -1,6 +1,7 @@
 /**
  * Runtime schemas for Orbit contract view results. Mirrors the Rust types in
- * `contracts/*`; u128 values arrive as decimal strings and become bigint.
+ * `contracts/factory` and `contracts/launch`; u128 values arrive as decimal
+ * strings and become bigint.
  */
 import { z } from "zod";
 
@@ -24,6 +25,8 @@ export const launchSchema = z.object({
   creator: z.string(),
   created_at_ns: u64,
   status: z.enum(["deploying", "live", "failed"]),
+  /** The launch's single contract account; `token`/`nft`/`claim`/`sale` name it for each part it has. */
+  account: z.string(),
   token: z.string().nullable(),
   nft: z.string().nullable(),
   claim: z.string().nullable(),
@@ -33,7 +36,7 @@ export type Launch = z.infer<typeof launchSchema>;
 
 export const factoryConfigSchema = z.object({
   owner_id: z.string(),
-  code: z.object({ token: z.string(), nft: z.string(), claim: z.string(), sale: z.string() }),
+  template: z.object({ hash: z.string(), size: z.number().int() }).nullable(),
   paused: z.boolean(),
   launch_count: z.number().int().nonnegative(),
 });
@@ -117,10 +120,8 @@ export const claimInfoSchema = z.object({
   creator_id: z.string(),
   tiers: z.array(tierSchema),
   starts_at_ns: u64,
-  status: z.enum(["awaiting_funding", "active"]),
   total_reserved: u128,
   claimed_total: u128,
-  pending_total: u128,
   claims_count: z.number().int(),
 });
 export type ClaimInfo = z.infer<typeof claimInfoSchema>;
@@ -128,8 +129,7 @@ export type ClaimInfo = z.infer<typeof claimInfoSchema>;
 export const claimRecordSchema = z.object({
   claimer: z.string(),
   amount: u128,
-  state: z.enum(["pending", "claimed"]),
-  updated_at_ns: u64,
+  claimed_at_ns: u64,
 });
 export type ClaimRecord = z.infer<typeof claimRecordSchema>;
 
@@ -149,9 +149,8 @@ export const saleInfoSchema = z.object({
   creator_id: z.string(),
   decimals: z.number().int(),
   config: saleConfigSchema,
-  status: z.enum(["awaiting_funding", "active", "closed"]),
+  status: z.enum(["active", "closed"]),
   phase: z.enum(["not_started", "holders", "public", "ended"]),
   sold: u128,
-  pending: u128,
 });
 export type SaleInfo = z.infer<typeof saleInfoSchema>;

@@ -11,7 +11,7 @@ const OPTIONS = [
     title: "Token",
     standard: "NEP-141",
     description: "A fungible token with a fixed supply distributed to the accounts you choose.",
-    deploys: ["Token contract"],
+    deploys: ["One launch contract: NEP-141 token"],
     enforced: ["Exact supply, minted once", "Allocations sum to supply", "No further minting"],
   },
   {
@@ -20,7 +20,7 @@ const OPTIONS = [
     title: "NFT collection",
     standard: "NEP-171",
     description: "A collection with a paid or free public mint, without a token.",
-    deploys: ["Collection contract"],
+    deploys: ["One launch contract: NEP-171 collection"],
     enforced: ["Supply cap", "Price and payment", "Wallet limit and mint window"],
   },
   {
@@ -28,8 +28,9 @@ const OPTIONS = [
     icon: Waypoints,
     title: "Connected token + NFT",
     standard: "NEP-141 + NEP-171",
-    description: "A token and a collection launched together. NFT holders claim token allocations by tier.",
-    deploys: ["Collection contract", "Token contract", "Claim contract"],
+    description:
+      "A token and a collection launched together. NFT holders claim token allocations by tier, buy in a gated sale, or both.",
+    deploys: ["One launch contract: token, collection, claims and sale"],
     enforced: ["Reserve funded at launch", "One claim per NFT", "Ownership checked at claim time"],
   },
 ];
@@ -40,8 +41,8 @@ export default function Page() {
       <div className="space-y-1">
         <h1 className="text-xl font-semibold tracking-tight text-ink">Create a launch</h1>
         <p className="max-w-2xl text-sm text-ink-muted">
-          Each option deploys standard NEAR contracts through the Orbit factory. You review every value before
-          signing, and the rules cannot be changed afterwards.
+          Each option deploys one standard NEAR contract through the Orbit factory. You review every value
+          before signing, and the rules cannot be changed afterwards.
         </p>
       </div>
       <div className="grid divide-y divide-line rounded-md border border-line lg:grid-cols-3 lg:divide-x lg:divide-y-0">

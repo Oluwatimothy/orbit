@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { KeyValue } from "@/components/ui/data";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { Notice } from "@/components/ui/status";
-import { network } from "@/config/network";
 import { useWallet } from "@/features/wallet/wallet-provider";
 import { cn } from "@/lib/cn";
 import { formatCompact, formatNear, formatShare, formatUnits } from "@/lib/format/units";
@@ -31,7 +30,7 @@ import {
 
 import { AllocationEditor } from "./allocation-editor";
 import { COLLECTION_DEFAULTS, CollectionIdentityFields, MintRuleFields } from "./collection-fields";
-import { MediaField, SlugField } from "./fields";
+import { launchAccountId, MediaField, SlugField } from "./fields";
 import { CreateLayout, FormSection, SummaryPanel } from "./layout";
 import { ReviewDialog } from "./review-dialog";
 import { TierEditor, type TiersForm } from "./tier-editor";
@@ -147,17 +146,24 @@ export function CreateConnectedPage() {
     !claimsEnabled && !saleEnabled
       ? "Choose holder claims, a holder sale, or both"
       : (tiers.error ?? saleResult.error);
-  const accountFor = (suffix: string) =>
-    `${collection.slug || "slug"}-${suffix}.${network.factoryId ?? "factory.testnet"}`;
-  const reserve: ContractAllocation[] = [
-    ...(tiers.reserved > 0n
-      ? [{ account_id: accountFor("claim"), amount: tiers.reserved.toString(), label: "NFT holder claims" }]
-      : []),
-    ...(saleResult.total > 0n
-      ? [{ account_id: accountFor("sale"), amount: saleResult.total.toString(), label: "NFT holder sale" }]
-      : []),
-  ];
+  // Claims and the sale pay out of one reserve held by the launch contract itself.
   const reservedTotal = tiers.reserved + saleResult.total;
+  const reserveLabel =
+    tiers.reserved > 0n && saleResult.total > 0n
+      ? "Holder claims + sale"
+      : tiers.reserved > 0n
+        ? "NFT holder claims"
+        : "NFT holder sale";
+  const reserve: ContractAllocation[] =
+    reservedTotal > 0n
+      ? [
+          {
+            account_id: launchAccountId(collection.slug || "slug"),
+            amount: reservedTotal.toString(),
+            label: reserveLabel,
+          },
+        ]
+      : [];
   const allocation = resolveAllocations(token.totalSupply ?? "", decimals, token.allocations ?? [], reserve);
 
   function complete(index: number) {
@@ -261,7 +267,6 @@ export function CreateConnectedPage() {
                 collectionForm.setValue("slug", v, { shouldValidate: true });
               }}
               error={collectionForm.formState.errors.slug?.message}
-              suffixes={["nft", "ft", ...(claimsEnabled ? ["claim"] : []), ...(saleEnabled ? ["sale"] : [])]}
             />
           </FormSection>
           <FormSection
@@ -336,7 +341,7 @@ export function CreateConnectedPage() {
               checked={saleEnabled}
               onChange={(v) => tiersForm.setValue("saleEnabled", v)}
               label="Enable NFT-gated sale"
-              detail="A sale contract holds the tokens for sale and checks NFT ownership on every purchase. You are paid as each purchase settles."
+              detail="The launch contract holds the tokens for sale and checks NFT ownership on every purchase. You are paid in the same step as each purchase."
             />
             {saleEnabled && (
               <SaleFields register={tiersForm.register} values={tiersValues.sale} symbol={token.symbol} />
@@ -430,16 +435,16 @@ export function CreateConnectedPage() {
               : "At launch",
           },
           {
-            label: "Contracts",
-            value: <span className="tabular text-xs">{collection.slug}-nft / -ft / -claim</span>,
+            label: "Contract",
+            value: <span className="tabular text-xs">{launchAccountId(collection.slug)}</span>,
           },
         ]}
         consequences={[
-          "The token supply is minted at launch; holder reserves go straight to the claim and sale contracts.",
-          "Claims and sales open only after each contract verifies it holds its full reserve.",
-          "Each NFT ID can claim once, by whoever holds it at claim time. Unclaimed tokens stay in the claim contract.",
+          "The token supply is minted at launch; the holder reserve goes straight to the launch contract.",
+          "Token, collection, claims and sale live in one contract, so claims and purchases check ownership and pay out in a single step.",
+          "Each NFT ID can claim once, by whoever holds it at claim time. Unclaimed tokens stay in the launch contract.",
           "Sale purchases are limited per NFT (and per account in the public window); unsold tokens return to you after the end.",
-          "All three accounts are keyless: nobody can change these rules after launch.",
+          "The launch account is keyless: nobody can change these rules after launch.",
         ]}
         onConfirm={launch}
       />

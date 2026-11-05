@@ -104,7 +104,7 @@ export function TokenSection({ tokenId, highlight }: { tokenId: string; highligh
                       />
                       {a.label}
                       {a.account_id === highlight && (
-                        <span className="text-2xs text-ink-faint">(claim reserve)</span>
+                        <span className="text-2xs text-ink-faint">(holder reserve)</span>
                       )}
                     </span>
                   </td>

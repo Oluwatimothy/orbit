@@ -18,12 +18,11 @@ Status: **implemented and tested locally** (2026-11-05). Not yet deployed to tes
                 └─────────┬──────────┘   └──────────────────┘
                           ▼
  ┌────────────────────────────────────────────────────────────────┐
- │ orbit-factory.testnet  (launch registry, deploys launches)     │
- │   ├─ <slug>-ft.orbit-factory.testnet     NEP-141/145/148       │
- │   ├─ <slug>-nft.orbit-factory.testnet    NEP-171/177/178/181   │
- │   ├─ <slug>-claim.orbit-factory.testnet  holder claims         │
- │   └─ <slug>-sale.orbit-factory.testnet   NFT-gated sale        │
- │ Global contract code (NEP-591), referenced by hash             │
+ │ orbit-factory.testnet  (launch registry, stores the template)  │
+ │   └─ <slug>.orbit-factory.testnet   one launch contract:       │
+ │        token (NEP-141/145/148) and/or collection               │
+ │        (NEP-171/177/178/181), holder claims, gated sale        │
+ │ Each launch runs a copy of the template; code hash is public   │
  └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -43,122 +42,81 @@ There is **no database** in this scope. Nothing off-chain is a source of truth.
 
 ## 2. Contracts
 
-Rust workspace at `contracts/`, `near-sdk` 5.30.0, `near-contract-standards` 5.30.0, built with `cargo near`.
+Rust workspace at `contracts/`, `near-sdk` 5.30.0, `near-contract-standards` 5.30.0, built with `cargo near` (ABI not embedded, to keep the code small). Two contracts, plus the shared crate `orbit-common` (config types, limits, validation, events). Why one launch contract instead of four: D-026.
 
 ### 2.1 Factory (`contracts/factory`)
 
-Deployed once at `orbit-factory.testnet` (name final at deployment).
-
 **State**
-- `owner_id` — may update the code hashes used for **future** launches and pause new launches. Cannot touch deployed launches (they have no access keys and reference immutable code by hash).
-- `code_hashes { token, nft, claim }` — NEP-591 global contract hashes.
-- `launches: Vector<Launch>` — append-only registry; `id` = index.
-- `launches_by_creator: LookupMap<AccountId, Vector<u64>>`.
-- `slugs: LookupSet<String>` — reserves a slug before deployment, so two launches can never target the same accounts.
+- `owner_id` may replace the template used by **future** launches and pause new launches. It cannot touch deployed launches: they have no access keys.
+- `template: Option<{ hash, size }>`. The wasm itself sits under a raw storage key outside the contract state, so ordinary calls never load it.
+- `launches: Vector<Launch>`: an append-only registry, where `id` is the index.
+- `launches_by_creator: LookupMap<AccountId, Vec<u64>>`.
+- `slugs: LookupSet<String>` reserves a slug before deployment.
 
-**Launch record**: `id`, `kind` (`Token | Collection | Connected`), `slug`, `creator`, `created_at_ns`, `status` (`Deploying | Live | Failed`), `token`, `nft`, `claim` (optional account IDs).
+**Launch record:** `id`, `kind` (`token | collection | connected`), `slug`, display fields, `creator`, `created_at_ns`, `status` (`deploying | live | failed`), `account` (`<slug>.<factory>`), and `token` / `nft` / `claim` / `sale`. The last four name that same account for each part the launch has, and are `null` otherwise.
 
-**Change methods** (all `#[payable]`):
-- `create_token_launch(slug, token)`
-- `create_collection_launch(slug, collection)`
-- `create_connected_launch(slug, description, token, collection, claim?, sale?)` (at least one of claim / sale)
+**Change methods**
+- `set_template()`: owner only, 1 yocto. The raw call input is the wasm; it must start with the wasm header.
+- `set_paused(bool)`: owner only, 1 yocto.
+- `create_token_launch(slug, description, token)`, `create_collection_launch(slug, collection)` and `create_connected_launch(slug, description, token, collection, claim?, sale?)`. All are payable.
 
-**Views**: `get_launch(id)`, `get_launches(from_index, limit)` (limit ≤ 50), `get_launches_by_creator(account_id, from_index, limit)`, `get_launch_count()`, `quote_deposit(kind)`, `get_config()`.
+**Views:** `get_config()`, `quote_deposit(kind)`, `is_slug_available(slug)`, `get_launch(id)`, `get_launches(from_index, limit ≤ 50)`, `get_launches_by_creator(account_id, from_index, limit)`, `get_launch_count()`.
 
 **Deployment flow**
-1. Validate the slug (2–20 chars, `[a-z0-9-]`, no leading/trailing/double hyphen) and every init argument with the **same** validation functions the asset contracts use (shared crate `orbit-common`).
-2. Reserve the slug, append the launch with status `Deploying`, measure the registry storage it used.
-3. Require `attached ≥ registry storage + Σ initial balances of new accounts`; refund the excess immediately.
-4. For each asset, one batch receipt: `create_account → transfer(initial balance) → use_global_contract(hash) → function_call("new", args)`. Actions in one receipt are atomic: if `new` panics, the account is not created and the transferred balance returns to the factory.
-5. Combine the batches with `.and()` and attach one callback, `on_launch_deployed(id, …)`.
-6. The callback reads every promise result. All succeeded → `Live`; for a connected launch it then calls `activate()` on the claim and/or sale contract, each of which checks its own token balance before opening. Any failed → `Failed`, the slug stays reserved (accounts may exist) and the creator is refunded the balances of the accounts that were not created.
+1. Validate the slug (2–20 chars, `[a-z0-9-]`, no leading, trailing or double hyphen) and every part with `validate_launch`. This is the same function the launch contract runs in `new`.
+2. Reserve the slug, append the launch as `deploying`, and measure the registry storage it used.
+3. Require `attached ≥ registry storage + launch balance`, where launch balance = template size × 0.00001 NEAR + 0.2 NEAR state allowance. Refund the excess immediately.
+4. One batch receipt: `create_account → transfer(launch balance) → deploy_contract(template) → new(creator_id, token?, collection?, claim?, sale?)`. Actions in a receipt are atomic, so if `new` panics the account is not created and the balance returns to the factory.
+5. `on_launch_deployed(id, balance)` marks the launch `live`, or `failed` with the balance refunded to the creator. The sandbox verifies that the failed deposit returns to the factory before this callback runs, so the refund does not depend on the factory's spare balance.
 
-No access keys are added to launch accounts. They cannot be upgraded, drained or re-initialised by anyone, including Orbit. Their initial balance pays for their own storage and is locked with them.
+### 2.2 Launch contract (`contracts/launch`)
 
-Factory-side validation makes a partial failure in a connected launch very unlikely (the only remaining causes are gas exhaustion or protocol errors). If it happens, the record is `Failed` and the UI states which accounts exist.
+One contract per launch. Its state is `creator_id` plus optional parts: `token`, `collection`, `claims` and `sale`. A call to a part the launch lacks panics with "this launch has no …". `new` runs `validate_launch` against its own account ID. That requires:
+- a token, a collection, or both;
+- with both, holder claims, a sale, or both;
+- claims and sales only with both;
+- the token allocates to the launch account exactly `claim reserve + sale total` (zero when there is neither, so no tokens can be locked by accident).
 
-### 2.2 Fungible token (`contracts/fungible-token`)
+**Token** (`token.rs`). Fixed supply minted in `new` to 1–10 allocations that sum exactly to the supply; there is no mint method afterwards. It implements NEP-141, NEP-145 and NEP-148 by delegating to `near-contract-standards`. View: `orbit_allocations()`.
 
-Fixed supply. **No mint method exists after initialisation.**
+**Collection** (`collection.rs`, `nft_standards.rs`). Supply is `Fixed(n ≤ 10,000)` or explicit `Unlimited`. The price, mint window, per-wallet limit and public-mint switch are fixed at launch. IDs are sequential from `"1"`.
+- `nft_mint(quantity ≤ 10)` measures every write, including the wallet counter, which is flushed before measuring. It requires price + storage + a 0.0025 NEAR per-token transfer reserve, pays the price to the creator and refunds the rest.
+- `creator_mint` (owner only) ignores the price and mint window but not the supply cap.
+- `set_paused` is owner only.
+- It implements NEP-171, 177, 178 and 181. Views: `orbit_config()`, `orbit_mint_stats()`, `orbit_minted_by(account)`.
 
-`new(metadata, total_supply, allocations, creator_id, launch_id)`:
-- `metadata.assert_valid()`; `decimals ≤ 24`; symbol 2–12 uppercase alphanumerics; icon is a `data:image/(svg+xml|png|webp);base64,` URI ≤ 8 KiB **or** an `ipfs://` / `https://` URL.
-- 1–10 allocations; amounts > 0; no duplicate accounts; `Σ amounts == total_supply` with checked `u128` addition.
-- Registers each recipient (storage paid by the contract's own balance), credits it and emits one NEP-297 `ft_mint` per allocation.
+**Holder claims** (`claim.rs`). There are 1–10 non-overlapping tiers of NFT IDs, each with an amount per NFT. `claim(nft_token_id)` is payable and synchronous:
+1. Check the start time, the canonical ID inside a tier, and that the ID has no existing record.
+2. Read the owner from the collection in the same contract; reject unless it is the caller.
+3. Write the record, update the totals, register the caller with the token if needed, and transfer the tier amount from the launch account's balance.
+4. Charge the storage this added (about 0.003 NEAR) from the deposit and refund the rest.
 
-Implements NEP-141 (`ft_transfer`, `ft_transfer_call`, `ft_total_supply`, `ft_balance_of`, `ft_resolve_transfer`), NEP-145 (`storage_deposit`, `storage_withdraw`, `storage_unregister`, `storage_balance_bounds`, `storage_balance_of`), NEP-148 (`ft_metadata`) and NEP-330 (`contract_source_metadata`). Orbit views: `orbit_allocations()`, `orbit_info()`.
+All of it happens in one receipt: a rejected or failed claim changes nothing, and there are no pending states.
 
-### 2.3 NFT collection (`contracts/nft-collection`)
+Views: `claim_info()`, `claim_allocation(id)`, `claim_record(id)`, `claim_records(ids ≤ 50)`.
 
-`new(owner_id, metadata, config)`; `config`:
-- `supply`: `Fixed(n)` (1 ≤ n ≤ 10,000) or `Unlimited` — explicit, never implied by absence.
-- `price` (yoctoNEAR, may be 0), `starts_at_ns`, optional `ends_at_ns`, optional `max_per_wallet`, `public_mint: bool`.
-- `media`: `Shared { media, media_hash? }` (every token shows the collection artwork) or `Directory { extension }` (token `n` uses `{base_uri}/{n}.{extension}`, per NEP-177 `base_uri`).
+**Gated sale** (`sale.rs`). It has a holder window with a per-NFT limit and an optional public window with a per-account limit; it ends at `ends_at_ns`.
 
-Token IDs are sequential decimal strings starting at `"1"`; duplicates are impossible by construction.
+`buy(amount, nft_token_id?)` is payable and synchronous:
+1. Check the phase and the remaining tokens.
+2. In the holder window, check ownership of the NFT.
+3. Update the limit counter and `sold`.
+4. Transfer the tokens.
+5. Require `cost + measured storage`, pay the cost to the creator, and refund the rest.
 
-`nft_mint(quantity)` (payable, `1 ≤ quantity ≤ 10`): checks public mint, time window, supply cap, wallet limit; mints; measures storage used; requires `attached ≥ price × quantity + storage cost`; refunds the excess; transfers `price × quantity` to the owner. Any failed check panics, so the whole receipt (and the attached deposit) reverts.
+Cost uses 256-bit arithmetic and rounds up. `withdraw_unsold()` lets the creator take back unsold tokens once, after the end.
 
-`creator_mint(receiver_id, quantity)` — owner only, same caps; the owner pays storage.
+Views: `sale_info()`, `sale_quote(amount)`, `sale_purchased_by_nft(id)`, `sale_purchased_by_account(account)`.
 
-`set_paused(bool)` — owner only. Price, supply and timing are **immutable** after initialisation.
+**Reserve invariant.** Only `claim`, `buy` and `withdraw_unsold` move tokens out of the launch account. Claims are capped by the tier totals and sales by `total_for_sale`, and their sum is exactly what was minted to the account. The account has no keys and never calls itself except for the standard `*_resolve_transfer` callbacks, so no other path can spend its balance.
 
-Implements NEP-171, 177, 178, 181, 297, 330. Views: `orbit_mint_config()`, `orbit_mint_stats()`, `orbit_minted_by(account_id)`.
+### 2.3 Events
 
-Royalties (NEP-199) are not implemented (D-011).
+Standard events (`ft_mint`, `ft_transfer`, `ft_burn`, `nft_mint`, `nft_transfer`) come from `near-contract-standards`. Orbit events use NEP-297 with `standard: "orbit"`, `version: "1.0.0"`: `template_set`, `launch_created`, `launch_live`, `launch_failed`, `claim`, `purchase`, `sale_closed`.
 
-### 2.4 Holder claim (`contracts/claim`)
+### 2.4 Code upgrades
 
-The connected-launch distribution contract. Eligibility is **checked against live ownership at claim time**; each NFT ID can be claimed once (D-004).
-
-`new(token_id, nft_id, creator_id, tiers, claim_starts_at_ns)`:
-- 1–10 tiers, each `{ name, from, to, amount_per_nft }` with `1 ≤ from ≤ to ≤ nft supply`, ranges non-overlapping, `amount_per_nft > 0`.
-- `total_reserved = Σ (to − from + 1) × amount_per_nft` (checked). The factory sets the token allocation to the claim contract equal to `total_reserved`.
-
-Status: `AwaitingFunding → Active`. `activate()` (callable by anyone) reads `ft_balance_of(self)` on the token and activates only if `balance ≥ total_reserved`.
-
-`claim(nft_token_id)` (payable, attach `CLAIM_DEPOSIT` = 0.005 NEAR — covers token storage registration and the claim record):
-1. Require `Active`, start time reached, the ID inside a tier, and no existing record for it.
-2. Record `Pending { claimer }`; add the amount to `pending_total`.
-3. `nft.nft_token(id)` → `on_owner_checked`.
-4. Owner ≠ claimer or call failed → delete the record, subtract `pending_total`, refund the deposit, emit `claim_rejected`.
-5. Owner = claimer → `token.storage_deposit(claimer, registration_only)` → `token.ft_transfer(claimer, amount)` → `on_transferred`.
-6. Transfer succeeded → `Claimed { claimer, amount, at }`, move the amount from `pending_total` to `claimed_total`, emit `claim`.
-7. Transfer failed → delete the record, subtract `pending_total`, refund the deposit minus what the storage registration used, emit `claim_failed`.
-
-Why this is safe:
-- A `Pending` record blocks a concurrent second claim of the same NFT.
-- `Claimed` is written only after the transfer result is known.
-- Claims are keyed by NFT ID, so transferring an NFT to another wallet does not make it claimable again.
-- The contract has no other method that moves tokens, so `claimed + pending + unclaimed ≤ total_reserved ≤ balance` always holds.
-
-Views: `get_config()`, `get_stats()`, `get_claim(nft_token_id)`, `get_claims(nft_token_ids)` (≤ 50).
-
-### 2.5 NFT-gated sale (`contracts/sale`)
-
-The second relationship type. The creator funds `total_for_sale` (an exact token allocation to `<slug>-sale`, enforced by the factory). Buyers pay a fixed NEAR price per whole token; cost rounds up and is computed in 256-bit arithmetic.
-
-| Window | Who can buy | Limit |
-|---|---|---|
-| Holder (`holder_starts_at_ns` → public start or end) | The current owner of the NFT ID passed to `buy` | `per_nft_limit` per NFT ID |
-| Public (optional, `public_starts_at_ns` → `ends_at_ns`) | Anyone | `per_account_public_limit` per account |
-
-`buy(amount, nft_token_id?)`:
-1. Checks the phase, the remaining supply and the deposit (cost + 0.005 NEAR).
-2. Reserves the amount against the NFT or account counter and `pending` **before** any cross-contract call, so concurrent purchases cannot exceed limits or supply.
-3. In the holder window, asks the NFT contract who owns the NFT and rolls back with a full refund if the caller is not the owner.
-4. Registers the buyer with the token and transfers the amount.
-5. On success, moves the amount from `pending` to `sold`, pays the creator the cost and refunds the change. On failure, releases the reservation and refunds.
-
-After `ends_at_ns`, with nothing pending, the creator can `withdraw_unsold()`; a failed withdrawal re-opens it. A connected launch has holder claims, a sale, or both.
-
-### 2.6 Events
-
-Standard events come from `near-contract-standards`. Orbit-specific events use NEP-297 with `standard: "orbit"`, `version: "1.0.0"`: `launch_created`, `launch_live`, `launch_failed`, `claim`, `claim_rejected`, `claim_failed`, `claim_activated`, `purchase`, `purchase_rejected`, `purchase_failed`, `sale_activated`, `sale_closed`.
-
-### 2.7 Code upgrades
-
-Launch contracts are not upgradeable (no keys, code referenced by immutable hash). The factory owner can point **future** launches at new code hashes. The factory itself is deployed from a full-access key held by the project owner — a disclosed trust assumption (see THREAT-MODEL).
+Launch contracts are not upgradeable: they have no keys, and the code each one runs is visible by hash and matches the factory's `template.hash`. The factory owner can set a new template for **future** launches. The factory account itself is controlled by a full-access key held by the project owner; this is a disclosed trust assumption (see THREAT-MODEL).
 
 ## 3. Web application (`apps/web`)
 
@@ -214,7 +172,7 @@ Wallet rejection, timeouts, RPC errors and network mismatch each have their own 
 | Layer | Tool | Scope |
 |---|---|---|
 | Contract unit | `cargo test` with `VMContextBuilder` | Validation, authorisation, arithmetic, state transitions, callback branches |
-| Contract integration | `near-workspaces` 0.24 on local sandbox | Factory → global contracts → launches → mint → fund → claim → duplicate claim → balances |
+| Contract integration | `near-workspaces` 0.24 on local sandbox | Factory → template upload → launches → mint → claim → duplicate and non-owner claims → gated sale → balances, storage limits, failure refunds |
 | Web unit | Vitest + Testing Library | Units, validation, tx-outcome parsing, components and states |
 | Web e2e | Playwright (production build, desktop + mobile) | Navigation, forms, launch page rendering, filters, disconnected states, no horizontal overflow. NEAR RPC and FastNEAR are mocked in the test harness only. |
 | Testnet | Scripted journey with real accounts (`scripts/`) | Full creator → participant flow |

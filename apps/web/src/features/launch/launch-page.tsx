@@ -20,22 +20,24 @@ import { SaleSection } from "./sale-section";
 import { TokenSection } from "./token-section";
 
 function Contracts({ launch }: { launch: Launch }) {
-  const rows = [
-    { label: "Token (NEP-141)", id: launch.token },
-    { label: "Collection (NEP-171)", id: launch.nft },
-    { label: "Holder claims", id: launch.claim },
-    { label: "Holder sale", id: launch.sale },
-  ].filter((row): row is { label: string; id: string } => Boolean(row.id));
+  const parts = [
+    launch.token && "Token (NEP-141)",
+    launch.nft && "Collection (NEP-171)",
+    launch.claim && "Holder claims",
+    launch.sale && "Holder sale",
+  ].filter(Boolean);
   return (
     <dl className="divide-y divide-line rounded-md border border-line">
-      {rows.map((row) => (
-        <div key={row.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-          <dt className="text-xs text-ink-muted">{row.label}</dt>
-          <dd className="min-w-0">
-            <Address accountId={row.id} short={false} />
-          </dd>
-        </div>
-      ))}
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+        <dt className="text-xs text-ink-muted">Launch contract</dt>
+        <dd className="min-w-0">
+          <Address accountId={launch.account} short={false} />
+        </dd>
+      </div>
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+        <dt className="text-xs text-ink-muted">Includes</dt>
+        <dd className="text-right text-xs text-ink">{parts.join(" · ")}</dd>
+      </div>
       <div className="flex items-center justify-between gap-3 px-4 py-2.5">
         <dt className="text-xs text-ink-muted">Creator</dt>
         <dd className="min-w-0">
@@ -104,13 +106,13 @@ function LaunchBody({ launch }: { launch: Launch }) {
       <Header launch={launch} />
       {launch.status === "deploying" && (
         <Notice tone="caution">
-          Contracts are being deployed. This page updates as soon as the factory records the result.
+          The launch contract is being deployed. This page updates as soon as the factory records the result.
         </Notice>
       )}
       {launch.status === "failed" ? (
         <Notice tone="negative">
-          Deployment failed and the account balances that were not used were refunded to the creator. The slug
-          stays reserved in the registry.
+          Deployment failed and the launch account&apos;s balance was refunded to the creator. The slug stays
+          reserved in the registry.
         </Notice>
       ) : launch.status === "live" ? (
         <div className="space-y-12">
@@ -119,7 +121,12 @@ function LaunchBody({ launch }: { launch: Launch }) {
           )}
           {launch.sale && <SaleSection saleId={launch.sale} collectionName={launch.name} />}
           {launch.nft && <CollectionSection nftId={launch.nft} />}
-          {launch.token && <TokenSection tokenId={launch.token} highlight={launch.claim} />}
+          {launch.token && (
+            <TokenSection
+              tokenId={launch.token}
+              highlight={launch.claim || launch.sale ? launch.account : null}
+            />
+          )}
         </div>
       ) : null}
       {launch.status === "live" && (
@@ -129,11 +136,9 @@ function LaunchBody({ launch }: { launch: Launch }) {
           </h2>
           <div className="rounded-md border border-line">
             <ActivityTable
-              accounts={[launch.token, launch.nft, launch.claim, launch.sale].filter((a): a is string =>
-                Boolean(a),
-              )}
+              accounts={[launch.account]}
               queryKey={["launch", launch.id]}
-              emptyText="Mints, claims and transfers involving this launch's contracts appear here."
+              emptyText="Mints, claims and transfers involving this launch's contract appear here."
             />
           </div>
           <p className="text-xs text-ink-faint">

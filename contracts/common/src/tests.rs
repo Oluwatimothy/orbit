@@ -184,10 +184,7 @@ fn slugs_and_launch_accounts() {
         assert!(validate_slug(bad).is_err(), "{bad}");
     }
     let factory = account("orbit-factory.testnet");
-    assert_eq!(
-        launch_account_id("genesis", "ft", &factory).unwrap().as_str(),
-        "genesis-ft.orbit-factory.testnet"
-    );
+    assert_eq!(launch_account_id("genesis", &factory).unwrap().as_str(), "genesis.orbit-factory.testnet");
 }
 
 fn sale() -> SaleConfig {
@@ -238,4 +235,69 @@ fn sale_cost_rounds_up_and_detects_overflow() {
     // 10M tokens (18 decimals) at 1,000 NEAR each fits only through 256-bit math.
     assert_eq!(sale_cost(10_000_000 * 10u128.pow(18), 1_000 * near, 18), Some(10_000_000_000 * near));
     assert_eq!(sale_cost(u128::MAX, 2, 0), None);
+}
+
+fn parts<'a>(
+    token: Option<&'a TokenConfig>,
+    collection: Option<&'a CollectionConfig>,
+    claim: Option<&'a ClaimConfig>,
+    sale: Option<&'a SaleConfig>,
+) -> LaunchParts<'a> {
+    LaunchParts { token, collection, claim, sale }
+}
+
+#[test]
+fn launch_reserves_must_be_allocated_to_the_launch_account() {
+    let launch = account("genesis.factory.testnet");
+    let fixed = collection(Supply::Fixed { max: 10 });
+    let claim = ClaimConfig { tiers: vec![tier(1, 10, 100)], starts_at_ns: U64(0) };
+    let sale = sale();
+    let sale_total = sale.total_for_sale.0;
+    let funded = |reserve: u128| {
+        token(reserve + 50, vec![allocation("genesis.factory.testnet", reserve), allocation("a.testnet", 50)])
+    };
+
+    let both = funded(1_000 + sale_total);
+    assert_eq!(
+        validate_launch(parts(Some(&both), Some(&fixed), Some(&claim), Some(&sale)), &launch),
+        Ok(1_000)
+    );
+    let claims_only = funded(1_000);
+    assert_eq!(
+        validate_launch(parts(Some(&claims_only), Some(&fixed), Some(&claim), None), &launch),
+        Ok(1_000)
+    );
+    let sale_only = funded(sale_total);
+    assert_eq!(validate_launch(parts(Some(&sale_only), Some(&fixed), None, Some(&sale)), &launch), Ok(0));
+
+    let short = funded(999 + sale_total);
+    let err =
+        validate_launch(parts(Some(&short), Some(&fixed), Some(&claim), Some(&sale)), &launch).unwrap_err();
+    assert!(err.contains("must allocate exactly"), "{err}");
+}
+
+#[test]
+fn launch_shape_rules() {
+    let launch = account("genesis.factory.testnet");
+    let plain = token(100, vec![allocation("a.testnet", 100)]);
+    let fixed = collection(Supply::Fixed { max: 10 });
+    let claim = ClaimConfig { tiers: vec![tier(1, 10, 1)], starts_at_ns: U64(0) };
+
+    assert_eq!(validate_launch(parts(Some(&plain), None, None, None), &launch), Ok(0));
+    assert_eq!(validate_launch(parts(None, Some(&fixed), None, None), &launch), Ok(0));
+    assert!(validate_launch(parts(None, None, None, None), &launch).is_err());
+    let err = validate_launch(parts(Some(&plain), Some(&fixed), None, None), &launch).unwrap_err();
+    assert!(err.contains("needs holder claims"), "{err}");
+    let err = validate_launch(parts(Some(&plain), None, Some(&claim), None), &launch).unwrap_err();
+    assert!(err.contains("both a token and a collection"), "{err}");
+
+    // Without claims or a sale, tokens sent to the launch account would be locked.
+    let locked = token(100, vec![allocation("genesis.factory.testnet", 100)]);
+    let err = validate_launch(parts(Some(&locked), None, None, None), &launch).unwrap_err();
+    assert!(err.contains("locked"), "{err}");
+
+    // Claims need a fixed supply.
+    let unlimited = collection(Supply::Unlimited);
+    let funded = token(10, vec![allocation("genesis.factory.testnet", 10)]);
+    assert!(validate_launch(parts(Some(&funded), Some(&unlimited), Some(&claim), None), &launch).is_err());
 }

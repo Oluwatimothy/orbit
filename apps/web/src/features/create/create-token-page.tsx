@@ -18,7 +18,7 @@ import {
 } from "@/lib/validation/launch";
 
 import { AllocationEditor } from "./allocation-editor";
-import { MediaField, SlugField } from "./fields";
+import { launchAccountId, MediaField, SlugField } from "./fields";
 import { CreateLayout, FormSection, SummaryPanel } from "./layout";
 import { ReviewDialog } from "./review-dialog";
 import { TokenIdentityFields } from "./token-fields";
@@ -142,7 +142,6 @@ export function CreateTokenPage() {
               setValue("slug", v, { shouldValidate: true });
             }}
             error={formState.errors.slug?.message}
-            suffixes={["ft"]}
           />
         </FormSection>
 
@@ -190,11 +189,14 @@ export function CreateTokenPage() {
           },
           { label: "Decimals", value: decimals },
           { label: "Allocations", value: allocation.allocations.length },
-          { label: "Contract", value: <span className="tabular text-xs">{values.slug}-ft</span> },
+          {
+            label: "Contract",
+            value: <span className="tabular text-xs">{launchAccountId(values.slug)}</span>,
+          },
         ]}
         consequences={[
           "The total supply is minted once to the listed accounts. No mint method exists afterwards.",
-          "The token account is created without access keys and cannot be upgraded by anyone.",
+          "The launch account is created without access keys and cannot be upgraded by anyone.",
           "Your launch is recorded in the public Orbit registry on testnet.",
         ]}
         onConfirm={() =>

@@ -39,7 +39,7 @@ async fn token_launch_distributes_allocations() -> Result<()> {
         .await?;
     expect_success(&result)?;
 
-    let ft = launch_account(&env, "treasury", "ft");
+    let ft = launch_account(&env, "treasury");
     assert_eq!(ft_balance(&env.worker, &ft, env.creator.id().as_str()).await?, 600_000_000);
     assert_eq!(ft_balance(&env.worker, &ft, env.alice.id().as_str()).await?, 400_000_000);
     let allocations = view(&env.worker, &ft, "orbit_allocations", json!({})).await?;
@@ -87,7 +87,7 @@ async fn collection_launch_enforces_payment() -> Result<()> {
         .transact()
         .await?;
     expect_success(&result)?;
-    let nft = launch_account(&env, "art", "nft");
+    let nft = launch_account(&env, "art");
 
     let underpaid = env
         .alice
@@ -130,18 +130,9 @@ async fn collection_launch_enforces_payment() -> Result<()> {
 #[tokio::test]
 async fn failed_deployment_is_recorded_and_refunded() -> Result<()> {
     let env = setup().await?;
-    // Point new token launches at code that was never published.
-    let config = view(&env.worker, env.factory.id().as_str(), "get_config", json!({})).await?;
-    let mut code = config["code"].clone();
-    code["token"] = json!("11111111111111111111111111111111");
-    let set = env
-        .owner
-        .call(env.factory.id(), "set_code_hashes")
-        .args_json(json!({ "code": code }))
-        .deposit(NearToken::from_yoctonear(1))
-        .transact()
-        .await?;
-    expect_success(&set)?;
+    // An empty wasm module deploys but has no `new`, so the batch fails.
+    let empty_module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+    expect_success(&set_template(&env.factory, &env.owner, empty_module).await?)?;
 
     let deposit = token_quote(&env).await?;
     let before = env.creator.view_account().await?.balance;
@@ -158,7 +149,7 @@ async fn failed_deployment_is_recorded_and_refunded() -> Result<()> {
     let launch = view(&env.worker, env.factory.id().as_str(), "get_launch", json!({ "id": 0 })).await?;
     assert_eq!(launch["status"], "failed");
     assert!(
-        env.worker.view_account(&launch_account(&env, "broken", "ft").parse()?).await.is_err(),
+        env.worker.view_account(&launch_account(&env, "broken").parse()?).await.is_err(),
         "account not created"
     );
     let spent = before.saturating_sub(env.creator.view_account().await?.balance);
@@ -169,6 +160,8 @@ async fn failed_deployment_is_recorded_and_refunded() -> Result<()> {
 #[tokio::test]
 async fn non_owner_cannot_reconfigure_factory() -> Result<()> {
     let env = setup().await?;
+    let template = set_template(&env.factory, &env.alice, wasm("orbit_launch")?).await?;
+    assert!(failure_text(&template).contains("only the factory owner"));
     let result = env
         .alice
         .call(env.factory.id(), "set_paused")
@@ -210,7 +203,7 @@ async fn mint_storage_fits_the_web_allowance() -> Result<()> {
         .transact()
         .await?;
     expect_success(&result)?;
-    let nft: near_workspaces::AccountId = launch_account(&env, "storage", "nft").parse()?;
+    let nft: near_workspaces::AccountId = launch_account(&env, "storage").parse()?;
 
     let mut previous = env.worker.view_account(&nft).await?.storage_usage;
     for quantity in [1u64, 10] {
@@ -230,4 +223,124 @@ async fn mint_storage_fits_the_web_allowance() -> Result<()> {
         previous = usage;
     }
     Ok(())
+}
+
+/// The largest launch the limits allow must fit `LAUNCH_STATE_ALLOWANCE`
+/// (0.2 NEAR) on top of its code: 10 allocations, an 8 KiB icon, a
+/// 1,000-character description, 512-character URLs, 10 tiers and a sale.
+#[tokio::test]
+async fn largest_launch_state_fits_the_allowance() -> Result<()> {
+    const ALLOWANCE_BYTES: u64 = 20_000;
+    let env = setup().await?;
+    let launch = launch_account(&env, "largest");
+    let token = 10u128.pow(18);
+    let reserve = 10 * 1_000 * token + 1_000 * token;
+    let others: Vec<_> = (0..9)
+        .map(|i| json!({ "account_id": format!("holder-{i}-with-a-long-account-name.testnet"), "amount": token.to_string(), "label": "L".repeat(32) }))
+        .collect();
+    let mut allocations =
+        vec![json!({ "account_id": launch, "amount": reserve.to_string(), "label": "L".repeat(32) })];
+    allocations.extend(others);
+    let icon = format!("data:image/png;base64,{}", "A".repeat(8_192 - 22));
+    let url = format!("https://example.com/{}", "a".repeat(512 - 20));
+    let tiers: Vec<_> = (0..10)
+        .map(|i| json!({ "name": "T".repeat(32), "from": i * 10 + 1, "to": i * 10 + 10, "amount_per_nft": (100 * token).to_string() }))
+        .collect();
+
+    let result = env
+        .creator
+        .call(env.factory.id(), "create_connected_launch")
+        .args_json(json!({
+            "slug": "largest",
+            "description": "D".repeat(1_000),
+            "token": {
+                "name": "N".repeat(64), "symbol": "SYMBOLSYMBOL", "decimals": 18, "icon": icon,
+                "total_supply": (reserve + 9 * token).to_string(),
+                "allocations": allocations,
+            },
+            "collection": {
+                "name": "N".repeat(64), "symbol": "SYMBOLSYMBOL", "description": "D".repeat(1_000),
+                "cover_media": url,
+                "media": { "kind": "shared", "media": url, "media_hash": null },
+                "supply": { "kind": "fixed", "max": 100 }, "price": "0",
+                "starts_at_ns": "0", "ends_at_ns": null, "max_per_wallet": null, "public_mint": true,
+            },
+            "claim": { "tiers": tiers, "starts_at_ns": "0" },
+            "sale": {
+                "price_per_token": "1000000000000000000000", "total_for_sale": (1_000 * token).to_string(),
+                "per_nft_limit": (10 * token).to_string(), "holder_starts_at_ns": "0",
+                "public_starts_at_ns": "1", "per_account_public_limit": token.to_string(),
+                "ends_at_ns": "4000000000000000000",
+            },
+        }))
+        .deposit(quote_for(&env, "connected").await?)
+        .gas(MAX_GAS)
+        .transact()
+        .await?;
+    expect_success(&result)?;
+    println!("connected launch burnt {} Tgas", result.total_gas_burnt.as_tgas());
+
+    let code = wasm("orbit_launch")?.len() as u64;
+    let account = env.worker.view_account(&launch.parse()?).await?;
+    let state = account.storage_usage - code;
+    println!("largest launch state: {state} bytes on top of {code} bytes of code");
+    assert!(state < ALLOWANCE_BYTES, "{state} bytes exceeds the state allowance");
+    Ok(())
+}
+
+/// A failed launch refunds the creator from the factory's balance in the
+/// deployment callback. On testnet the factory's spare balance is smaller than
+/// one launch account's, so this relies on the failed batch's deposit
+/// returning to the factory before the callback runs. Checked here with a
+/// factory drained to 0.5 NEAR of spare balance and a ~5 NEAR launch account.
+#[tokio::test]
+async fn failed_launch_refund_does_not_need_spare_factory_balance() -> Result<()> {
+    let env = setup().await?;
+    expect_success(&set_template(&env.factory, &env.owner, module_without_new(500_000)).await?)?;
+
+    let factory = env.factory.as_account();
+    let details = factory.view_account().await?;
+    let locked = NearToken::from_yoctonear(u128::from(details.storage_usage) * 10u128.pow(19));
+    let spare = details.balance.saturating_sub(locked).saturating_sub(NearToken::from_millinear(500));
+    factory.transfer_near(env.owner.id(), spare).await?.into_result()?;
+
+    let deposit = token_quote(&env).await?;
+    assert!(
+        deposit > NearToken::from_near(5),
+        "the launch account balance exceeds the factory's spare balance"
+    );
+    let before = env.creator.view_account().await?.balance;
+    let result = env
+        .creator
+        .call(env.factory.id(), "create_token_launch")
+        .args_json(token_args(&env, "refunded"))
+        .deposit(deposit)
+        .gas(MAX_GAS)
+        .transact()
+        .await?;
+    assert!(!result.receipt_failures().is_empty(), "the deployment receipt fails");
+    env.worker.fast_forward(3).await?;
+
+    let launch = view(&env.worker, env.factory.id().as_str(), "get_launch", json!({ "id": 0 })).await?;
+    assert_eq!(launch["status"], "failed");
+    let spent = before.saturating_sub(env.creator.view_account().await?.balance);
+    assert!(spent < NearToken::from_millinear(50), "account balance refunded, spent {spent}");
+    Ok(())
+}
+
+/// A valid wasm module with a `payload`-byte custom section and no exports.
+fn module_without_new(payload: usize) -> Vec<u8> {
+    let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x00];
+    let mut size = payload + 2;
+    loop {
+        let byte = (size & 0x7f) as u8;
+        size >>= 7;
+        module.push(if size == 0 { byte } else { byte | 0x80 });
+        if size == 0 {
+            break;
+        }
+    }
+    module.extend([1, b'x']);
+    module.extend(std::iter::repeat_n(0u8, payload));
+    module
 }

@@ -6,11 +6,11 @@ Scope: Orbit contracts, the web application and its API route, on NEAR testnet. 
 
 | Asset | Where it lives |
 |---|---|
-| Token balances and supply | Token contracts |
-| NFT ownership and supply caps | NFT contracts |
-| Tokens reserved for holder claims | Claim contracts |
+| Token balances and supply | Launch contracts (token part) |
+| NFT ownership and supply caps | Launch contracts (collection part) |
+| Tokens reserved for holder claims and the sale | The launch account's own token balance |
 | Mint proceeds | Paid to the creator in the mint receipt |
-| Launch registry integrity | Factory |
+| Launch registry integrity and the launch template | Factory |
 | Users' keys | Users' wallets — never in Orbit |
 | Pinata API key | Server environment only |
 | Factory owner key | Project owner's machine — never in the repository |
@@ -29,40 +29,51 @@ Scope: Orbit contracts, the web application and its API route, on NEAR testnet. 
 
 | # | Threat | Mitigation | Verified by |
 |---|---|---|---|
-| C1 | Anyone mints extra fungible tokens | No mint method after `new`; `new` runs once in the deployment batch and is `#[init]` | Unit tests: no mint path; total supply equals the sum of allocations |
+| C1 | Anyone mints extra fungible tokens | No mint method after `new`; `new` runs once in the deployment batch and is `#[init]` | Unit tests: total supply equals the sum of allocations and never changes |
 | C2 | Allocations don't add up to supply / overflow | Checked `u128` arithmetic; exact equality required | Unit tests with boundary and overflow inputs |
 | C3 | Minting beyond max supply | Cap checked before each mint in `nft_mint` and `creator_mint` | Unit + sandbox tests |
 | C4 | Duplicate NFT IDs | IDs are a sequential counter | Unit test |
-| C5 | Minting below price or without storage payment | Required deposit computed after measuring actual storage; panic reverts the whole mint | Unit + sandbox tests |
-| C6 | Unauthorised admin calls (`creator_mint`, `set_paused`, factory config) | `predecessor_account_id == owner` assertions | Unit tests for each privileged method |
-| C7 | Double claim of one NFT | Record written as `Pending` before any cross-contract call; one record per NFT ID | Unit + sandbox tests (sequential and in-flight) |
-| C8 | Claim with an NFT the caller does not own | Ownership read from the NFT contract in a cross-contract call | Sandbox test |
-| C9 | Claim recorded as complete when the transfer failed | `Claimed` written only in the callback after a successful `ft_transfer` result; failure rolls back | Unit test with mocked promise failure |
-| C10 | Claims exceed funded balance | `total_reserved` fixed at init; activation requires `balance ≥ total_reserved`; no other outbound transfer path | Unit + sandbox tests |
-| C11 | Forged callbacks | Callbacks are `#[private]` | Unit test calling a callback from another account |
-| C12 | Re-initialisation or upgrade of a launch | No access keys on launch accounts; code referenced by immutable hash | Sandbox test: account has no keys |
+| C5 | Minting below price or without storage payment | Required deposit computed after measuring all writes (wallet counter flushed first); panic reverts the whole mint | Unit + sandbox tests |
+| C6 | Unauthorised admin calls (`creator_mint`, `set_paused`, `set_template`) | Predecessor checked against the collection owner / factory owner; admin methods require 1 yocto | Unit tests for each privileged method; sandbox test for `set_template` |
+| C7 | Double claim of one NFT | One record per canonical NFT ID, checked and written in the same receipt as the transfer | Unit + sandbox tests (same holder, other holder, after transfer) |
+| C8 | Claim or holder purchase with an NFT the caller does not own | Owner read from the collection in the same contract, in the same receipt | Unit + sandbox tests |
+| C9 | Claim recorded although the transfer failed (or the reverse) | Record, totals and transfer happen in one receipt; any panic reverts all of them | By construction: no cross-contract calls in `claim`/`buy` |
+| C10 | Claims or sales spend more than the reserve, or each other's share | Reserve minted to the launch account equals claim total + sale total exactly (checked in `new`); claims capped by tiers, sales by `total_for_sale` | Unit test spending both pools to exactly zero |
+| C11 | Forged callbacks | The only callbacks are `on_launch_deployed` and the standard `*_resolve_transfer`, all `#[private]` | Sandbox test calling them from another account |
+| C12 | Re-initialisation or upgrade of a launch | No access keys; `#[init]` refuses existing state | Sandbox test: account has no keys and runs the exact template |
 | C13 | Slug collision / account squatting | Only the factory can create its subaccounts; slugs reserved in factory state before deployment | Unit test |
-| C14 | Gas or storage exhaustion through unbounded input | Limits on allocations (10), tiers (10), mint quantity (10), page size (50), string lengths | Unit tests at limit and limit + 1 |
-| C15 | Partial failure of a connected launch | Atomic batch per account; callback records `Failed` and refunds balances of accounts that were not created | Sandbox test with a forced init failure |
+| C14 | Gas or storage exhaustion through unbounded input | Limits on allocations (10), tiers (10), mint quantity (10), page size (50), string lengths | Unit tests at limit and limit + 1; sandbox test of the largest launch (13.8 kB state, 79 Tgas) |
+| C15 | Failed deployment leaves the creator unpaid | One atomic batch; callback marks `failed` and refunds the account balance | Sandbox tests, including a factory with only 0.5 NEAR to spare |
+| C16 | Over-selling or exceeding sale limits | Limits and `sold` checked and updated in the same receipt as the transfer | Unit tests (per-NFT across holders, per-account, sold out) |
+| C17 | Creator unpaid or buyer charged without delivery | Payment, transfer and refund in one receipt | Unit + sandbox tests |
+| C18 | Draining the launch account's locked balance with storage it never charges for | Claims, purchases and mints measure and keep the storage they add; mints keep a 0.0025 NEAR per-token transfer reserve | Unit tests; sandbox checks the account's balance still covers its storage after a full journey |
+| C19 | Spending the reserve through a path other than claim/buy/withdraw | The launch account has no keys and never calls itself except for standard resolve callbacks; `storage_unregister`, `ft_transfer*` act on the predecessor's own balance | Review (see below) |
+| C21 | Draining the launch's spare NEAR by registering through a claim or purchase, then calling `storage_unregister` (review finding 1) | A new registration costs at least `storage_balance_bounds().min`, which is what unregistering refunds. Registrations at launch (≤ 10) and the creator's one `withdraw_unsold` registration are bounded and covered by the state allowance | Unit test with a short account ID |
+| C20 | Malicious or broken template | Owner-only; affects future launches only; the template hash is public and equals each launch's code hash | Sandbox test; disclosed trust assumption 1 |
 
-| C16 | Over-selling or exceeding sale limits via concurrent purchases | NFT/account counters and `pending` reserved before any cross-contract call; `amount ≤ total − sold − pending` | Sale unit tests (in-flight limit, oversell) + sandbox |
-| C17 | Buying in the holder window without owning the NFT | Ownership read from the NFT contract; rejection releases the reservation | Sale unit + sandbox tests |
-| C18 | Creator unpaid or buyer charged on failed delivery | Creator paid only in `on_delivered` after a successful transfer; failure releases and refunds | Sale unit tests |
-| C19 | Draining a contract's storage balance with records it never charges for (review H-1, M-2, M-3) | Sale measures and keeps the storage each purchase adds and deletes records that drop to zero; holder-window IDs must be canonical and ≤ supply; mints charge for every write, including the wallet counter, plus a 0.0025 NEAR per-token transfer reserve (owner sets never outnumber tokens) | Sale and NFT unit tests; sandbox storage measurement |
-| C20 | Holding supply or claims hostage for free with unowned or fake NFT IDs (review M-1, L-3) | Invalid IDs rejected outright; rejected purchases and claims keep 0.001 NEAR | Sale and claim unit tests |
-| C21 | Deploy callback out of gas → launch stuck `Deploying`, refund lost (review L-1) | Callback reserves 80 Tgas static gas (two 30 Tgas activations plus its own work) | Sandbox tests with 300 Tgas |
-| C22 | Quoted deposit too low for large icons (review L-2) | Registry allowance raised to 0.1 NEAR (largest record); unused part refunded | Factory unit tests |
+### Independent review of the single-contract design (2026-11-05)
 
-### Independent review (2026-11-05)
+An adversarial review read the launch contract, the factory, the shared validation and the relevant `near-contract-standards` / `near-sdk` source. It found nothing critical or high:
+- No path moves tokens out of the launch account other than `claim`, `buy` and `withdraw_unsold`.
+- Claims and the sale cannot overspend each other.
+- Storage measurement covers every write.
+- Init arguments cannot be injected.
 
-An adversarial review of all contracts was run against the source and the near-sdk / near-contract-standards 5.30.0 code. It found no way to mint, double-claim, over-sell or get past purchase limits. Its storage and gas findings were fixed (C19–C22).
+How each finding was handled:
+1. **Fixed (C21).** Medium/low: register/unregister cycles could drain about 0.0005 NEAR each from the launch's spare balance.
+2. **Disclosed.** `creator_mint` ignores the mint window and price. In a connected launch the creator can mint unminted NFTs and claim or buy with them. This is trust assumption 2 and is stated on the "How it works" page.
+3. **Refuted by test.** The review suspected the failure refund depends on the factory's spare balance. The sandbox test `failed_launch_refund_does_not_need_spare_factory_balance` shows that the failed deposit returns before the callback runs.
+4. **Info.** The registry quote counts characters, not bytes. The real cost is measured and enforced, so an oversized description fails cleanly instead of being under-charged.
+5. **Info.** Contract metadata lists both token and NFT standards for every launch. Methods for a part the launch does not have fail with "this launch has no …".
 
-Accepted or disclosed instead of fixed:
-- **Slugs are never freed** after a failed launch, and token-only launches reserve a name for about 0.35 NEAR. Squatting is possible but costly; suffixes cannot collide across slugs.
-- **`creator_mint` ignores the mint window.** In a connected launch the creator can mint unminted NFTs and use their claims or sale quota. This is disclosed on the "How it works" page.
-- **Public minting during a holder window** lets anyone mint more NFTs and so gain more per-NFT quota. This is a configuration choice; creators can close the mint before the sale.
+**Accepted or disclosed instead of fixed:**
+- **Slugs are never freed** after a failed launch. Squatting a name costs a full launch deposit, minus the refund.
+- **`creator_mint` ignores the mint window** (finding 2 above).
+- **Public minting during a holder window** lets anyone mint more NFTs and so gain more per-NFT sale quota. This is a configuration choice; creators can close the mint before the sale.
 - **The per-account public limit** can be split across many accounts.
-- **Unclaimed claim tokens stay in the claim contract permanently.** NEAR fees kept by the sale contract cannot be withdrawn.
+- **Some tokens stay in the launch contract permanently:** unclaimed claim tokens (including the reserve for NFTs that are never minted), and tokens or NFTs sent to the launch account.
+
+The review of the original four-contract design found no way to mint, double-claim, over-sell or bypass limits. Its storage and gas findings were fixed before the redesign; the redesign removed the asynchronous paths they concerned.
 
 ### Web application and API
 
@@ -80,7 +91,7 @@ Accepted or disclosed instead of fixed:
 
 ## Trust assumptions (disclosed in the app's "How it works" page)
 
-1. **Factory owner** can change which code future launches use and pause new launches. They cannot alter existing launches.
+1. **Factory owner** can replace the template future launches use and pause new launches. They cannot alter existing launches.
 2. **Collection creators** can pause minting and mint to any account within the supply cap, even outside the mint window.
 3. **Claim-time eligibility** follows the current holder of each NFT, not a historical snapshot.
 4. **Media availability** depends on IPFS pinning (Pinata) or the host of an HTTPS URL. The contracts store references, not images.

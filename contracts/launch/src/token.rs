@@ -1,5 +1,6 @@
-//! Fixed-supply NEP-141 token. The entire supply is minted to the configured
-//! allocations in `new`; no method can create tokens afterwards.
+//! Fixed-supply NEP-141 token (with NEP-145 storage and NEP-148 metadata).
+//! The entire supply is minted to the configured allocations in `new`; no
+//! method can create tokens afterwards.
 
 use near_contract_standards::fungible_token::events::{FtBurn, FtMint};
 use near_contract_standards::fungible_token::metadata::{
@@ -9,45 +10,24 @@ use near_contract_standards::fungible_token::{FungibleToken, FungibleTokenCore, 
 use near_contract_standards::storage_management::{StorageBalance, StorageBalanceBounds, StorageManagement};
 use near_sdk::json_types::U128;
 use near_sdk::store::LazyOption;
-use near_sdk::{env, near, AccountId, BorshStorageKey, NearToken, PanicOnDefault, PromiseOrValue};
+use near_sdk::{env, near, AccountId, NearToken, PromiseOrValue};
 use orbit_common::config::{TokenAllocation, TokenConfig};
-use orbit_common::validate::validate_token_config;
+
+use crate::{part, part_mut, Contract, ContractExt, StorageKey};
+
+const NAME: &str = "token";
 
 #[near]
-#[derive(BorshStorageKey)]
-enum StorageKey {
-    Accounts,
-    Metadata,
-    Allocations,
-}
-
-#[near(
-    contract_state,
-    contract_metadata(
-        version = "0.1.0",
-        link = "https://github.com/Oluwatimothy/orbit",
-        standard(standard = "nep141", version = "1.0.0"),
-        standard(standard = "nep145", version = "1.0.0"),
-        standard(standard = "nep148", version = "1.0.0"),
-        standard(standard = "nep297", version = "1.0.0"),
-        standard(standard = "nep330", version = "1.2.0"),
-    )
-)]
-#[derive(PanicOnDefault)]
-pub struct Contract {
-    token: FungibleToken,
+pub struct Fungible {
+    pub ft: FungibleToken,
     metadata: LazyOption<FungibleTokenMetadata>,
     allocations: LazyOption<Vec<TokenAllocation>>,
-    creator_id: AccountId,
 }
 
-#[near]
-impl Contract {
+impl Fungible {
     /// Registers and credits every allocation. Storage for those registrations
-    /// is paid from this account's initial balance.
-    #[init]
-    pub fn new(config: TokenConfig, creator_id: AccountId) -> Self {
-        validate_token_config(&config).unwrap_or_else(|e| env::panic_str(&e));
+    /// is paid from the launch account's initial balance.
+    pub fn new(config: TokenConfig) -> Self {
         let metadata = FungibleTokenMetadata {
             spec: FT_METADATA_SPEC.to_string(),
             name: config.name,
@@ -59,10 +39,10 @@ impl Contract {
         };
         metadata.assert_valid();
 
-        let mut token = FungibleToken::new(StorageKey::Accounts);
+        let mut ft = FungibleToken::new(StorageKey::FtAccounts);
         for allocation in &config.allocations {
-            token.internal_register_account(&allocation.account_id);
-            token.internal_deposit(&allocation.account_id, allocation.amount.0);
+            ft.internal_register_account(&allocation.account_id);
+            ft.internal_deposit(&allocation.account_id, allocation.amount.0);
         }
         let mints: Vec<FtMint> = config
             .allocations
@@ -72,20 +52,37 @@ impl Contract {
         FtMint::emit_many(&mints);
 
         Self {
-            token,
-            metadata: LazyOption::new(StorageKey::Metadata, Some(metadata)),
-            allocations: LazyOption::new(StorageKey::Allocations, Some(config.allocations)),
-            creator_id,
+            ft,
+            metadata: LazyOption::new(StorageKey::FtMetadata, Some(metadata)),
+            allocations: LazyOption::new(StorageKey::FtAllocations, Some(config.allocations)),
         }
     }
 
+    /// Moves `amount` from the launch account's reserve to `receiver_id`,
+    /// registering the receiver first if needed. The caller charges for the
+    /// storage written; the returned yoctoNEAR is the extra to charge so that a
+    /// new registration costs at least what `storage_unregister` refunds
+    /// (`storage_balance_bounds().min`, sized for a 64-character account).
+    /// Otherwise register/unregister cycles with short account IDs would pay
+    /// out of the launch's own balance.
+    pub fn pay_out(&mut self, receiver_id: &AccountId, amount: u128, memo: String) -> u128 {
+        let mut surcharge = 0;
+        if !self.ft.accounts.contains_key(receiver_id) {
+            let before = env::storage_usage();
+            self.ft.internal_register_account(receiver_id);
+            let used = crate::storage_cost_since(before);
+            surcharge = self.ft.storage_balance_bounds().min.as_yoctonear().saturating_sub(used);
+        }
+        self.ft.internal_transfer(&env::current_account_id(), receiver_id, amount, Some(memo));
+        surcharge
+    }
+}
+
+#[near]
+impl Contract {
     /// The initial distribution recorded at launch. Balances may have moved since.
     pub fn orbit_allocations(&self) -> Vec<TokenAllocation> {
-        self.allocations.get().clone().unwrap_or_default()
-    }
-
-    pub fn orbit_creator(&self) -> AccountId {
-        self.creator_id.clone()
+        part(&self.token, NAME).allocations.get().clone().unwrap_or_default()
     }
 }
 
@@ -93,7 +90,7 @@ impl Contract {
 impl FungibleTokenCore for Contract {
     #[payable]
     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>) {
-        self.token.ft_transfer(receiver_id, amount, memo)
+        part_mut(&mut self.token, NAME).ft.ft_transfer(receiver_id, amount, memo)
     }
 
     #[payable]
@@ -104,15 +101,15 @@ impl FungibleTokenCore for Contract {
         memo: Option<String>,
         msg: String,
     ) -> PromiseOrValue<U128> {
-        self.token.ft_transfer_call(receiver_id, amount, memo, msg)
+        part_mut(&mut self.token, NAME).ft.ft_transfer_call(receiver_id, amount, memo, msg)
     }
 
     fn ft_total_supply(&self) -> U128 {
-        self.token.ft_total_supply()
+        part(&self.token, NAME).ft.ft_total_supply()
     }
 
     fn ft_balance_of(&self, account_id: AccountId) -> U128 {
-        self.token.ft_balance_of(account_id)
+        part(&self.token, NAME).ft.ft_balance_of(account_id)
     }
 }
 
@@ -121,7 +118,7 @@ impl FungibleTokenResolver for Contract {
     #[private]
     fn ft_resolve_transfer(&mut self, sender_id: AccountId, receiver_id: AccountId, amount: U128) -> U128 {
         let (used_amount, burned_amount) =
-            self.token.internal_ft_resolve_transfer(&sender_id, receiver_id, amount);
+            part_mut(&mut self.token, NAME).ft.internal_ft_resolve_transfer(&sender_id, receiver_id, amount);
         if burned_amount > 0 {
             FtBurn {
                 owner_id: &sender_id,
@@ -142,18 +139,18 @@ impl StorageManagement for Contract {
         account_id: Option<AccountId>,
         registration_only: Option<bool>,
     ) -> StorageBalance {
-        self.token.storage_deposit(account_id, registration_only)
+        part_mut(&mut self.token, NAME).ft.storage_deposit(account_id, registration_only)
     }
 
     #[payable]
     fn storage_withdraw(&mut self, amount: Option<NearToken>) -> StorageBalance {
-        self.token.storage_withdraw(amount)
+        part_mut(&mut self.token, NAME).ft.storage_withdraw(amount)
     }
 
     /// With `force: true` a positive balance is burned, reducing total supply.
     #[payable]
     fn storage_unregister(&mut self, force: Option<bool>) -> bool {
-        match self.token.internal_storage_unregister(force) {
+        match part_mut(&mut self.token, NAME).ft.internal_storage_unregister(force) {
             Some((account_id, balance)) => {
                 if balance > 0 {
                     FtBurn {
@@ -170,20 +167,17 @@ impl StorageManagement for Contract {
     }
 
     fn storage_balance_bounds(&self) -> StorageBalanceBounds {
-        self.token.storage_balance_bounds()
+        part(&self.token, NAME).ft.storage_balance_bounds()
     }
 
     fn storage_balance_of(&self, account_id: AccountId) -> Option<StorageBalance> {
-        self.token.storage_balance_of(account_id)
+        part(&self.token, NAME).ft.storage_balance_of(account_id)
     }
 }
 
 #[near]
 impl FungibleTokenMetadataProvider for Contract {
     fn ft_metadata(&self) -> FungibleTokenMetadata {
-        self.metadata.get().clone().unwrap_or_else(|| env::panic_str("metadata missing"))
+        part(&self.token, NAME).metadata.get().clone().unwrap_or_else(|| env::panic_str("metadata missing"))
     }
 }
-
-#[cfg(test)]
-mod tests;

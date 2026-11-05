@@ -74,7 +74,7 @@ function BuyPanel({ saleId, info, metadata }: { saleId: string; info: SaleInfo; 
   const nftId = holder ? (selected ?? ownedIds[0] ?? null) : null;
   const usedAmount = holder ? (used.data?.[ownedIds.indexOf(nftId ?? "")] ?? 0n) : (used.data?.[0] ?? 0n);
   const limit = holder ? info.config.per_nft_limit : (info.config.per_account_public_limit ?? 0n);
-  const remainingInSale = info.config.total_for_sale - info.sold - info.pending;
+  const remainingInSale = info.config.total_for_sale - info.sold;
   const remaining = [limit - usedAmount, remainingInSale].reduce((a, b) => (a < b ? a : b));
   const amount = tryParseUnits(input || "0", metadata.decimals) ?? -1n;
   const cost = amount > 0n ? saleCost(amount, info.config.price_per_token, metadata.decimals) : 0n;
@@ -89,10 +89,6 @@ function BuyPanel({ saleId, info, metadata }: { saleId: string; info: SaleInfo; 
     await run(buyTx(saleId, amount, cost, nftId), {
       label: `Buy ${formatUnits(amount, metadata.decimals, { maxFractionDigits: 4 })} ${metadata.symbol}`,
       invalidate: [saleKey(saleId), ["token", info.token_id]],
-      check: (summary) =>
-        summary.returnValue === false
-          ? "The purchase was rejected: this account does not own the NFT."
-          : null,
     });
     setInput("");
   }
@@ -143,9 +139,9 @@ function BuyPanel({ saleId, info, metadata }: { saleId: string; info: SaleInfo; 
         </KeyValue>
       </dl>
       <p className="text-xs text-ink-faint">
-        The extra {formatNear(PURCHASE_MARGIN)} registers you with the token and stores your purchase record;
-        the unused part is refunded. A purchase rejected because you do not own the NFT keeps 0.001 NEAR. The
-        creator is paid only after the tokens reach you.
+        The extra {formatNear(PURCHASE_MARGIN)} covers registering you with the token and storing your
+        purchase record; the unused part is refunded. The ownership check, the token transfer and the payment
+        to the creator happen in one step, so a rejected purchase changes nothing.
       </p>
       <Button
         variant="primary"
@@ -165,7 +161,7 @@ function WithdrawUnsold({ saleId, info }: { saleId: string; info: SaleInfo }) {
   const { run, busy } = useTransaction();
   if (accountId !== info.creator_id || info.status !== "active" || info.phase !== "ended") return null;
   const unsold = info.config.total_for_sale - info.sold;
-  if (unsold === 0n || info.pending > 0n) return null;
+  if (unsold === 0n) return null;
   return (
     <Button
       variant="secondary"
@@ -194,14 +190,8 @@ export function SaleSection({ saleId, collectionName }: { saleId: string; collec
 
   if (info.isPending || (info.data && token.isPending)) return <Skeleton className="h-64 w-full" />;
   if (info.isError)
-    return (
-      <ErrorState
-        title="Could not read the sale contract"
-        error={info.error}
-        onRetry={() => info.refetch()}
-      />
-    );
-  if (token.isError) return <ErrorState title="Could not read the token contract" error={token.error} />;
+    return <ErrorState title="Could not read the sale" error={info.error} onRetry={() => info.refetch()} />;
+  if (token.isError) return <ErrorState title="Could not read the token" error={token.error} />;
   if (!token.data) return null;
 
   const data = info.data;
@@ -217,11 +207,7 @@ export function SaleSection({ saleId, collectionName }: { saleId: string; collec
         id="sale-heading"
         title="Holder sale"
         description={`Owners of ${collectionName} NFTs can buy ${metadata.symbol} first, at a fixed price.`}
-        action={
-          <Badge tone={data.status === "awaiting_funding" ? "caution" : phase.tone}>
-            {data.status === "awaiting_funding" ? "Awaiting funding" : phase.label}
-          </Badge>
-        }
+        action={<Badge tone={phase.tone}>{phase.label}</Badge>}
       />
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <div className="space-y-5">
@@ -245,8 +231,7 @@ export function SaleSection({ saleId, collectionName }: { saleId: string; collec
             <li>
               Holder window opens{" "}
               {config.holder_starts_at_ns === 0n ? "at launch" : when(config.holder_starts_at_ns)}: each NFT
-              may buy up to {fmt(config.per_nft_limit)}, checked against the collection contract at purchase
-              time.
+              may buy up to {fmt(config.per_nft_limit)}, checked against current ownership at purchase time.
             </li>
             <li>
               {config.public_starts_at_ns !== null && config.per_account_public_limit !== null
@@ -258,12 +243,8 @@ export function SaleSection({ saleId, collectionName }: { saleId: string; collec
         </div>
         <div className="space-y-4 rounded-md border border-line bg-surface p-4">
           <h3 className="text-sm font-semibold text-ink">Buy</h3>
-          {data.status !== "active" ? (
-            <Notice>
-              {data.status === "closed"
-                ? "The sale is closed."
-                : "The sale opens once its token reserve is verified."}
-            </Notice>
+          {data.status === "closed" ? (
+            <Notice>The sale is closed.</Notice>
           ) : data.phase === "holders" || data.phase === "public" ? (
             <BuyPanel saleId={saleId} info={data} metadata={metadata} />
           ) : (

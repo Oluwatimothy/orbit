@@ -2,49 +2,30 @@ use near_contract_standards::non_fungible_token::core::NonFungibleTokenCore;
 use near_contract_standards::non_fungible_token::enumeration::NonFungibleTokenEnumeration;
 use near_contract_standards::non_fungible_token::metadata::NonFungibleTokenMetadataProvider;
 use near_sdk::json_types::{U128, U64};
-use near_sdk::test_utils::{get_created_receipts, get_logs, VMContextBuilder};
-use near_sdk::{testing_env, AccountId, NearToken};
+use near_sdk::test_utils::{get_created_receipts, get_logs};
 use orbit_common::config::{CollectionConfig, Supply, TokenMedia};
 
-use crate::Contract;
+use super::{account, collection_config, setup as setup_at, Contract};
 
 const PRICE: u128 = 1_000_000_000_000_000_000_000_000; // 1 NEAR
 const STORAGE_ALLOWANCE: u128 = 200_000_000_000_000_000_000_000; // 0.2 NEAR, enough for 10 NFTs
 
-fn account(name: &str) -> AccountId {
-    name.parse().unwrap()
-}
-
 fn setup(predecessor: &str, deposit: u128, now_ns: u64) {
-    let context = VMContextBuilder::new()
-        .current_account_id(account("genesis-nft.factory.testnet"))
-        .predecessor_account_id(account(predecessor))
-        .attached_deposit(NearToken::from_yoctonear(deposit))
-        .account_balance(NearToken::from_near(5))
-        .block_timestamp(now_ns)
-        .build();
-    testing_env!(context);
+    setup_at(predecessor, deposit, now_ns);
 }
 
 fn config(supply: Supply) -> CollectionConfig {
     CollectionConfig {
-        name: "Genesis".into(),
-        symbol: "GEN".into(),
-        description: "Genesis collection".into(),
-        cover_media: "ipfs://bafycover".into(),
-        media: TokenMedia::Shared { media: "ipfs://bafymedia".into(), media_hash: None },
-        supply,
         price: U128(PRICE),
         starts_at_ns: U64(1_000),
         ends_at_ns: Some(U64(2_000)),
         max_per_wallet: Some(3),
-        public_mint: true,
+        ..collection_config(supply)
     }
 }
 
 fn deploy_with(config: CollectionConfig) -> Contract {
-    setup("factory.testnet", 0, 0);
-    Contract::new(account("creator.testnet"), config)
+    super::deploy(None, Some(config), None, None)
 }
 
 fn deploy() -> Contract {
@@ -256,7 +237,7 @@ fn mint_keeps_storage_and_transfer_reserve() {
     contract.nft_mint(1);
     let bytes = u128::from(near_sdk::env::storage_usage() - before);
     let kept = bytes * near_sdk::env::storage_byte_cost().as_yoctonear()
-        + crate::mint::TRANSFER_STORAGE_RESERVE.as_yoctonear();
+        + crate::TRANSFER_STORAGE_RESERVE.as_yoctonear();
     let refund = get_created_receipts()
         .into_iter()
         .find(|r| r.receiver_id == account("alice.testnet"))
@@ -267,4 +248,11 @@ fn mint_keeps_storage_and_transfer_reserve() {
         .max()
         .unwrap();
     assert_eq!(refunded, STORAGE_ALLOWANCE - kept, "minted_by entry and reserve are charged");
+}
+
+#[test]
+#[should_panic(expected = "this launch has no token")]
+fn collection_only_launch_has_no_token_methods() {
+    use near_contract_standards::fungible_token::FungibleTokenCore;
+    deploy().ft_total_supply();
 }

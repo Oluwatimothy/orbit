@@ -68,7 +68,7 @@ describe("resolveAllocations", () => {
   });
 
   it("combines fixed allocations (the claim reserve) with user rows", () => {
-    const reserve = { account_id: "genesis-claim.factory.testnet", amount: "2000", label: "NFT holders" };
+    const reserve = { account_id: "genesis.factory.testnet", amount: "2000", label: "NFT holders" };
     const result = resolveAllocations("10000", 0, [row("creator.testnet", "percent", "80")], [reserve]);
     expect(result.error).toBeNull();
     expect(result.allocations[0]).toEqual(reserve);

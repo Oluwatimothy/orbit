@@ -1,20 +1,25 @@
-//! Orbit launch factory. Keeps the on-chain launch registry and deploys each
-//! launch's contracts as keyless subaccounts that reference global contract
-//! code by hash (NEP-591). See `deploy.rs` for the deployment flow.
+//! Orbit launch factory. Keeps the on-chain launch registry, stores the
+//! launch contract template and deploys it to one keyless subaccount per
+//! launch. See `deploy.rs` for the deployment flow.
 
 use near_sdk::json_types::{Base58CryptoHash, U128, U64};
 use near_sdk::store::{LookupMap, LookupSet, Vector};
-use near_sdk::{assert_one_yocto, env, near, require, AccountId, BorshStorageKey, NearToken, PanicOnDefault};
+use near_sdk::{
+    assert_one_yocto, env, near, require, AccountId, BorshStorageKey, CryptoHash, NearToken, PanicOnDefault,
+};
 use orbit_common::limits::MAX_PAGE_SIZE;
 
 mod deploy;
 
-/// Initial balance of each launch account. It pays for that contract's own
-/// state and stays locked with the keyless account.
-pub const TOKEN_ACCOUNT_BALANCE: NearToken = NearToken::from_millinear(250);
-pub const NFT_ACCOUNT_BALANCE: NearToken = NearToken::from_millinear(300);
-pub const CLAIM_ACCOUNT_BALANCE: NearToken = NearToken::from_millinear(100);
-pub const SALE_ACCOUNT_BALANCE: NearToken = NearToken::from_millinear(100);
+/// Raw storage key of the launch contract template. Kept outside the
+/// contract state so ordinary calls do not load it.
+const TEMPLATE_KEY: &[u8] = b"template";
+/// Wasm module header: magic number and version 1.
+const WASM_HEADER: [u8; 8] = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+
+/// Balance for the launch account's own state (metadata, allocations,
+/// config) on top of its code. It stays locked with the keyless account.
+pub const LAUNCH_STATE_ALLOWANCE: NearToken = NearToken::from_millinear(200);
 /// Upper bound quoted for the registry entry. Actual usage is measured and
 /// the difference refunded.
 /// Covers the largest record: an 8 KiB data-URI icon plus a 1,000-character description.
@@ -28,14 +33,13 @@ enum StorageKey {
     Slugs,
 }
 
-/// Global contract code hashes used for new launches.
+/// The launch contract code new launches receive.
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Debug, PartialEq)]
-pub struct CodeHashes {
-    pub token: Base58CryptoHash,
-    pub nft: Base58CryptoHash,
-    pub claim: Base58CryptoHash,
-    pub sale: Base58CryptoHash,
+pub struct TemplateInfo {
+    /// SHA-256 of the code, base58, as explorers show a contract's code hash.
+    pub hash: Base58CryptoHash,
+    pub size: u64,
 }
 
 #[near(serializers = [json, borsh])]
@@ -57,7 +61,9 @@ pub enum LaunchStatus {
 }
 
 /// Registry entry. Display fields are copied here so discovery needs one view
-/// call; balances and ownership are always read from the asset contracts.
+/// call; balances and ownership are always read from the launch contract.
+/// `token`, `nft`, `claim` and `sale` name the launch account for each part
+/// the launch has.
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Launch {
@@ -71,6 +77,7 @@ pub struct Launch {
     pub creator: AccountId,
     pub created_at_ns: U64,
     pub status: LaunchStatus,
+    pub account: AccountId,
     pub token: Option<AccountId>,
     pub nft: Option<AccountId>,
     pub claim: Option<AccountId>,
@@ -80,7 +87,7 @@ pub struct Launch {
 #[near(serializers = [json])]
 pub struct FactoryConfig {
     pub owner_id: AccountId,
-    pub code: CodeHashes,
+    pub template: Option<TemplateInfo>,
     pub paused: bool,
     pub launch_count: u64,
 }
@@ -88,7 +95,7 @@ pub struct FactoryConfig {
 #[near(
     contract_state,
     contract_metadata(
-        version = "0.1.0",
+        version = "0.2.0",
         link = "https://github.com/Oluwatimothy/orbit",
         standard(standard = "nep297", version = "1.0.0"),
         standard(standard = "nep330", version = "1.2.0"),
@@ -97,7 +104,7 @@ pub struct FactoryConfig {
 #[derive(PanicOnDefault)]
 pub struct Contract {
     owner_id: AccountId,
-    code: CodeHashes,
+    template: Option<TemplateInfo>,
     paused: bool,
     launches: Vector<Launch>,
     launches_by_creator: LookupMap<AccountId, Vec<u64>>,
@@ -107,10 +114,10 @@ pub struct Contract {
 #[near]
 impl Contract {
     #[init]
-    pub fn new(owner_id: AccountId, code: CodeHashes) -> Self {
+    pub fn new(owner_id: AccountId) -> Self {
         Self {
             owner_id,
-            code,
+            template: None,
             paused: false,
             launches: Vector::new(StorageKey::Launches),
             launches_by_creator: LookupMap::new(StorageKey::LaunchesByCreator),
@@ -118,13 +125,21 @@ impl Contract {
         }
     }
 
-    /// Owner only. Affects launches created afterwards; existing launches
-    /// keep the code they were deployed with.
+    /// Owner only. The call's raw input is the launch contract wasm. Affects
+    /// launches created afterwards; existing launches keep the code they were
+    /// deployed with. Storage is paid from the factory's balance.
     #[payable]
-    pub fn set_code_hashes(&mut self, code: CodeHashes) {
+    pub fn set_template(&mut self) -> TemplateInfo {
         assert_one_yocto();
         self.assert_owner();
-        self.code = code;
+        let code = env::input().unwrap_or_default();
+        require!(code.starts_with(&WASM_HEADER), "the input must be a wasm module");
+        env::storage_write(TEMPLATE_KEY, &code);
+        let hash: CryptoHash = env::sha256_array(&code);
+        let info = TemplateInfo { hash: hash.into(), size: code.len() as u64 };
+        self.template = Some(info.clone());
+        orbit_common::events::emit("template_set", &info);
+        info
     }
 
     /// Owner only. Stops new launches; existing launches are unaffected.
@@ -138,23 +153,17 @@ impl Contract {
     pub fn get_config(&self) -> FactoryConfig {
         FactoryConfig {
             owner_id: self.owner_id.clone(),
-            code: self.code.clone(),
+            template: self.template.clone(),
             paused: self.paused,
             launch_count: u64::from(self.launches.len()),
         }
     }
 
-    /// Deposit to attach for a launch of `kind`; the unused part is refunded.
+    /// Deposit to attach for a launch; the unused part is refunded. The same
+    /// for every kind: one account holding the template code and its state.
     pub fn quote_deposit(&self, kind: LaunchKind) -> U128 {
-        let balances = match kind {
-            LaunchKind::Token => TOKEN_ACCOUNT_BALANCE,
-            LaunchKind::Collection => NFT_ACCOUNT_BALANCE,
-            LaunchKind::Connected => TOKEN_ACCOUNT_BALANCE
-                .saturating_add(NFT_ACCOUNT_BALANCE)
-                .saturating_add(CLAIM_ACCOUNT_BALANCE)
-                .saturating_add(SALE_ACCOUNT_BALANCE),
-        };
-        U128(balances.saturating_add(REGISTRY_STORAGE_ALLOWANCE).as_yoctonear())
+        let _ = kind;
+        U128(self.launch_balance().saturating_add(REGISTRY_STORAGE_ALLOWANCE).as_yoctonear())
     }
 
     pub fn is_slug_available(&self, slug: String) -> bool {
@@ -195,6 +204,17 @@ impl Contract {
             env::predecessor_account_id() == self.owner_id,
             "only the factory owner can call this method"
         );
+    }
+
+    fn template(&self) -> &TemplateInfo {
+        self.template.as_ref().unwrap_or_else(|| env::panic_str("no launch template has been set"))
+    }
+
+    /// Initial balance of a launch account: storage for its code plus its state.
+    fn launch_balance(&self) -> NearToken {
+        env::storage_byte_cost()
+            .saturating_mul(u128::from(self.template().size))
+            .saturating_add(LAUNCH_STATE_ALLOWANCE)
     }
 }
 

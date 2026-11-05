@@ -21,7 +21,8 @@ const ACTION_LABEL: Record<string, string> = {
   nft_transfer: "Transferred NFT",
   nft_transfer_call: "Transferred NFT",
   storage_deposit: "Registered storage",
-  activate: "Activated claims",
+  buy: "Bought tokens",
+  withdraw_unsold: "Withdrew unsold tokens",
   set_paused: "Changed pause state",
 };
 
@@ -33,13 +34,9 @@ export function describe(item: ActivityItem): string {
   if (item.method === "nft_mint" && mint?.token_ids?.length) {
     return `${base} ${mint.token_ids.length === 1 ? `NFT #${mint.token_ids[0]}` : `${mint.token_ids.length} NFTs`}`;
   }
-  const claim = item.events.find((e) => e.standard === "orbit" && e.event.startsWith("claim"));
+  const claim = item.events.find((e) => e.standard === "orbit" && e.event === "claim");
   const claimData = claim?.data[0] as { nft_token_id?: string } | undefined;
-  if (claim && claimData?.nft_token_id) {
-    return claim.event === "claim"
-      ? `Claimed for NFT #${claimData.nft_token_id}`
-      : `Claim rejected for NFT #${claimData.nft_token_id}`;
-  }
+  if (claimData?.nft_token_id) return `Claimed for NFT #${claimData.nft_token_id}`;
   return base;
 }
 

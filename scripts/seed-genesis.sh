@@ -7,6 +7,10 @@
 #   ORBIT_FACTORY  the deployed factory
 #   ORBIT_CREATOR  creator account (key in the macOS keychain)
 #   ORBIT_COVER    ipfs:// (preferred) or https:// URL of assets/genesis-cover.svg after uploading it
+#
+# The creator attaches the factory's quote (about 4.37 NEAR: storage for the
+# launch contract's code and state, plus a registry allowance that is mostly
+# refunded).
 set -euo pipefail
 : "${ORBIT_FACTORY:?set ORBIT_FACTORY}"
 : "${ORBIT_CREATOR:?set ORBIT_CREATOR}"
@@ -15,8 +19,8 @@ set -euo pipefail
 E18="000000000000000000"
 NOW_NS="$(node -e 'console.log((BigInt(Date.now()) * 1000000n).toString())')"
 END_NS="$(node -e 'console.log(((BigInt(Date.now()) + 30n * 86400000n) * 1000000n).toString())')"
-CLAIM="genesis-claim.$ORBIT_FACTORY"
-SALE="genesis-sale.$ORBIT_FACTORY"
+# Claims and the sale pay out of one reserve held by the launch account itself.
+LAUNCH="genesis.$ORBIT_FACTORY"
 
 ARGS=$(cat <<JSON
 {
@@ -27,8 +31,7 @@ ARGS=$(cat <<JSON
     "total_supply": "10000000$E18",
     "allocations": [
       { "account_id": "$ORBIT_CREATOR", "amount": "7500000$E18", "label": "Creator treasury" },
-      { "account_id": "$CLAIM", "amount": "2000000$E18", "label": "NFT holder claims" },
-      { "account_id": "$SALE", "amount": "500000$E18", "label": "NFT holder sale" }
+      { "account_id": "$LAUNCH", "amount": "2500000$E18", "label": "Holder claims + sale" }
     ]
   },
   "collection": {
@@ -56,5 +59,8 @@ ARGS=$(cat <<JSON
 JSON
 )
 
+echo "→ quote (yoctoNEAR):"
+near contract call-function as-read-only "$ORBIT_FACTORY" quote_deposit json-args '{"kind":"connected"}' network-config testnet now
+
 near contract call-function as-transaction "$ORBIT_FACTORY" create_connected_launch json-args "$ARGS" \
-  prepaid-gas '300 Tgas' attached-deposit '0.9 NEAR' sign-as "$ORBIT_CREATOR" network-config testnet sign-with-keychain send
+  prepaid-gas '300 Tgas' attached-deposit '4.37 NEAR' sign-as "$ORBIT_CREATOR" network-config testnet sign-with-keychain send

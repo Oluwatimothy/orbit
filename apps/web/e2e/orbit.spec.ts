@@ -36,10 +36,12 @@ test("connected launch page shows the relationship, tiers, supply and mint rules
   await expect(page.getByRole("heading", { name: "Holder allocation" })).toBeVisible();
   await expect(page.getByText("Claims open")).toBeVisible();
   await expect(page.getByRole("table", { name: "Allocation tiers" })).toContainText("#1–#2000");
-  await expect(page.getByRole("table", { name: "Initial token allocation" })).toContainText("NFT holders");
+  await expect(page.getByRole("table", { name: "Initial token allocation" })).toContainText(
+    "NFT holder claims",
+  );
   await expect(page.getByText("Connect a wallet to see your eligibility")).toBeVisible();
   await expect(page.getByRole("button", { name: "Connect wallet to mint" })).toBeVisible();
-  await expect(page.getByText("genesis-claim.e2e-factory.testnet").first()).toBeVisible();
+  await expect(page.getByText("genesis.e2e-factory.testnet").first()).toBeVisible();
 });
 
 test("unknown launch IDs show an error instead of fake data", async ({ page }) => {

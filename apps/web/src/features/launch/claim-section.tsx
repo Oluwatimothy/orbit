@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, CheckCircle2, Clock, Wallet } from "lucide-react";
+import { ArrowRight, CheckCircle2, Wallet } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Address, SectionHeader, Stat } from "@/components/ui/data";
@@ -26,7 +26,7 @@ export function allocationFor(tiers: Tier[], tokenId: string): { tier: Tier; amo
 function Relationship({ collection, symbol, info }: { collection: string; symbol: string; info: ClaimInfo }) {
   const nodes = [
     { label: "NFT collection", value: collection, account: info.nft_id },
-    { label: "Claim contract", value: "Holder reserve", account: null },
+    { label: "Holder reserve", value: "Held by the launch", account: null },
     { label: "Token", value: symbol, account: info.token_id },
   ];
   return (
@@ -114,7 +114,7 @@ function YourClaims({ claimId, info, metadata }: { claimId: string; info: ClaimI
       <EmptyState
         icon={Wallet}
         title="Connect a wallet to see your eligibility"
-        description="Orbit reads the NFTs your account holds from the collection contract and checks each one against the claim contract."
+        description="Orbit reads the NFTs your account holds from the launch contract and checks each one against its claim records."
         action={
           <Button variant="primary" size="sm" onClick={() => void connect()}>
             Connect wallet
@@ -151,9 +151,6 @@ function YourClaims({ claimId, info, metadata }: { claimId: string; info: ClaimI
     await run(claimTx(claimId, tokenId), {
       label: `Claim ${formatUnits(amount, metadata.decimals, { maxFractionDigits: 2 })} ${metadata.symbol} for NFT #${tokenId}`,
       invalidate: [assetKeys.claim(claimId), ["claim", info.nft_id], ["token", info.token_id]],
-      // The contract returns false (without failing) when the ownership check rejects the claim.
-      check: (summary) =>
-        summary.returnValue === false ? "The claim was rejected: this account does not own the NFT." : null,
     });
   }
 
@@ -193,15 +190,11 @@ function YourClaims({ claimId, info, metadata }: { claimId: string; info: ClaimI
                     : "—"}
                 </td>
                 <td className="py-2.5 pl-3 pr-4 text-right">
-                  {record?.state === "claimed" ? (
+                  {record ? (
                     <Badge tone="positive">
                       <CheckCircle2 className="size-3" aria-hidden /> Claimed
                     </Badge>
-                  ) : record?.state === "pending" ? (
-                    <Badge tone="caution">
-                      <Clock className="size-3" aria-hidden /> Pending
-                    </Badge>
-                  ) : allocation && info.status === "active" && !notStarted ? (
+                  ) : allocation && !notStarted ? (
                     <Button
                       size="sm"
                       variant="primary"
@@ -224,6 +217,12 @@ function YourClaims({ claimId, info, metadata }: { claimId: string; info: ClaimI
   );
 }
 
+function ClaimStatus({ startsAt }: { startsAt: bigint }) {
+  const now = useNow();
+  const open = msToNs(now) >= startsAt;
+  return <Badge tone={open ? "positive" : "caution"}>{open ? "Claims open" : "Not started"}</Badge>;
+}
+
 export function ClaimSection({ claimId, collectionName }: { claimId: string; collectionName: string }) {
   const info = useClaimInfo(claimId);
   const tokenId = info.data?.token_id;
@@ -232,25 +231,17 @@ export function ClaimSection({ claimId, collectionName }: { claimId: string; col
   if (info.isPending || (tokenId && token.isPending)) return <Skeleton className="h-72 w-full" />;
   if (info.isError)
     return (
-      <ErrorState
-        title="Could not read the claim contract"
-        error={info.error}
-        onRetry={() => info.refetch()}
-      />
+      <ErrorState title="Could not read holder claims" error={info.error} onRetry={() => info.refetch()} />
     );
   if (token.isError)
     return (
-      <ErrorState
-        title="Could not read the token contract"
-        error={token.error}
-        onRetry={() => token.refetch()}
-      />
+      <ErrorState title="Could not read the token" error={token.error} onRetry={() => token.refetch()} />
     );
   if (!token.data) return null;
 
   const data = info.data;
   const { metadata } = token.data;
-  const remaining = data.total_reserved - data.claimed_total - data.pending_total;
+  const remaining = data.total_reserved - data.claimed_total;
   const fmt = (value: bigint) => `${formatCompact(value, metadata.decimals)} ${metadata.symbol}`;
 
   return (
@@ -259,34 +250,29 @@ export function ClaimSection({ claimId, collectionName }: { claimId: string; col
         id="claim-heading"
         title="Holder allocation"
         description={`Each eligible ${collectionName} NFT can claim its tier's ${metadata.symbol} allocation once.`}
-        action={
-          <Badge tone={data.status === "active" ? "positive" : "caution"}>
-            {data.status === "active" ? "Claims open" : "Awaiting funding"}
-          </Badge>
-        }
+        action={<ClaimStatus startsAt={data.starts_at_ns} />}
       />
       <Relationship collection={collectionName} symbol={metadata.symbol} info={data} />
 
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-3">
         <Stat label="Reserved" value={fmt(data.total_reserved)} />
         <Stat
           label="Claimed"
           value={fmt(data.claimed_total)}
           sub={`${formatShare(data.claimed_total, data.total_reserved)} · ${data.claims_count} ${data.claims_count === 1 ? "claim" : "claims"}`}
         />
-        <Stat label="In progress" value={fmt(data.pending_total)} />
         <Stat label="Unclaimed" value={fmt(remaining)} />
       </dl>
 
       <TierTable tiers={data.tiers} metadata={metadata} />
 
       <Notice>
-        <strong className="font-medium text-ink">How eligibility works.</strong> Ownership is checked against
-        the collection contract at the moment you claim — not from a snapshot. Whoever holds an NFT can claim
-        its allocation, once. If an NFT is sold before it is claimed, the buyer can claim it; after a claim,
-        that NFT can never claim again. Claiming attaches {formatNear(CLAIM_DEPOSIT)} to register your token
-        balance and record the claim; If the claim is rejected because you do not own the NFT, 0.001 NEAR is
-        kept and the rest refunded.
+        <strong className="font-medium text-ink">How eligibility works.</strong> Ownership is checked at the
+        moment you claim — not from a snapshot. Whoever holds an NFT can claim its allocation, once. If an NFT
+        is sold before it is claimed, the buyer can claim it; after a claim, that NFT can never claim again.
+        The ownership check, the claim record and the token transfer happen in one step: a rejected claim
+        changes nothing. Claiming attaches {formatNear(CLAIM_DEPOSIT)}; the contract keeps only the storage
+        the claim adds (about 0.003 NEAR) and refunds the rest.
       </Notice>
 
       <div className="space-y-3">
@@ -295,7 +281,7 @@ export function ClaimSection({ claimId, collectionName }: { claimId: string; col
       </div>
 
       <p className="flex flex-wrap items-center gap-x-2 text-xs text-ink-faint">
-        Claim contract <Address accountId={claimId} />
+        Launch contract <Address accountId={claimId} />
       </p>
     </section>
   );

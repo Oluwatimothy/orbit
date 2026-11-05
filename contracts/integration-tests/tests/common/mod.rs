@@ -10,7 +10,6 @@ use near_workspaces::result::ExecutionFinalResult;
 use near_workspaces::types::{Gas, NearToken};
 use near_workspaces::{Account, Contract, Worker};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
 pub const MAX_GAS: Gas = Gas::from_tgas(300);
 
@@ -25,40 +24,37 @@ pub struct Env {
     pub bob: Account,
 }
 
-fn wasm(name: &str) -> Result<Vec<u8>> {
+pub fn wasm(name: &str) -> Result<Vec<u8>> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../target/near/{name}/{name}.wasm"));
     std::fs::read(&path)
         .with_context(|| format!("{} missing — run ./scripts/build-contracts.sh", path.display()))
 }
 
-/// Publishes `code` as a global contract and returns its base58 hash.
-async fn publish(publisher: &Contract, code: Vec<u8>) -> Result<String> {
-    let hash = bs58::encode(Sha256::digest(&code)).into_string();
-    let result = publisher.call("publish").args_borsh(code).gas(MAX_GAS).transact().await?;
-    expect_success(&result)?;
-    Ok(hash)
+/// Uploads `code` as the factory's launch template (raw call input).
+pub async fn set_template(
+    factory: &Contract,
+    owner: &Account,
+    code: Vec<u8>,
+) -> Result<ExecutionFinalResult> {
+    Ok(owner
+        .call(factory.id(), "set_template")
+        .args(code)
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(MAX_GAS)
+        .transact()
+        .await?)
 }
 
 pub async fn setup() -> Result<Env> {
     let worker = near_workspaces::sandbox().await?;
     let root = worker.root_account()?;
 
-    let publisher_account = sub(&root, "publisher", 400).await?;
-    let publisher = publisher_account.deploy(&wasm("orbit_test_global_publisher")?).await?.into_result()?;
-    let token = publish(&publisher, wasm("orbit_fungible_token")?).await?;
-    let nft = publish(&publisher, wasm("orbit_nft_collection")?).await?;
-    let claim = publish(&publisher, wasm("orbit_claim")?).await?;
-    let sale = publish(&publisher, wasm("orbit_sale")?).await?;
-
     let owner = sub(&root, "owner", 10).await?;
-    let factory_account = sub(&root, "factory", 50).await?;
+    let factory_account = sub(&root, "factory", 20).await?;
     let factory = factory_account.deploy(&wasm("orbit_factory")?).await?.into_result()?;
-    let init = factory
-        .call("new")
-        .args_json(json!({ "owner_id": owner.id(), "code": { "token": token, "nft": nft, "claim": claim, "sale": sale } }))
-        .transact()
-        .await?;
+    let init = factory.call("new").args_json(json!({ "owner_id": owner.id() })).transact().await?;
     expect_success(&init)?;
+    expect_success(&set_template(&factory, &owner, wasm("orbit_launch")?).await?)?;
 
     Ok(Env {
         creator: sub(&root, "creator", 50).await?,
@@ -109,6 +105,10 @@ pub fn quote(value: &Value) -> Result<NearToken> {
     Ok(NearToken::from_yoctonear(value.as_str().context("quote is a string")?.parse()?))
 }
 
-pub fn launch_account(env: &Env, slug: &str, suffix: &str) -> String {
-    format!("{slug}-{suffix}.{}", env.factory.id())
+pub fn launch_account(env: &Env, slug: &str) -> String {
+    format!("{slug}.{}", env.factory.id())
+}
+
+pub async fn quote_for(env: &Env, kind: &str) -> Result<NearToken> {
+    quote(&view(&env.worker, env.factory.id().as_str(), "quote_deposit", json!({ "kind": kind })).await?)
 }

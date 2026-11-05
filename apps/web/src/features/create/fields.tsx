@@ -23,17 +23,20 @@ function useDebounced<T>(value: T, ms: number): T {
   return debounced;
 }
 
+/** The account a launch is deployed to: one contract per launch, under the factory. */
+export function launchAccountId(slug: string): string {
+  return `${slug}.${network.factoryId ?? "factory.testnet"}`;
+}
+
 /** Slug input that checks availability in the factory registry as you type. */
 export function SlugField({
   value,
   onChange,
   error,
-  suffixes,
 }: {
   value: string;
   onChange: (value: string) => void;
   error?: string;
-  suffixes: string[];
 }) {
   const debounced = useDebounced(value, 400);
   const valid = slugSchema.safeParse(debounced).success;
@@ -57,7 +60,7 @@ export function SlugField({
         <XCircle className="size-3.5" aria-hidden /> Taken
       </span>
     );
-  const accounts = suffixes.map((s) => `${value || "slug"}-${s}.${network.factoryId ?? "factory.testnet"}`);
+  const account = launchAccountId(value || "slug");
 
   return (
     <Field
@@ -66,14 +69,8 @@ export function SlugField({
       aside={status}
       hint={
         <>
-          Your contracts will live at{" "}
-          {accounts.map((a, i) => (
-            <span key={a}>
-              <span className="tabular text-ink-muted">{a}</span>
-              {i < accounts.length - 1 ? ", " : ""}
-            </span>
-          ))}
-          . A slug can be used once.
+          Your launch contract will live at <span className="tabular text-ink-muted">{account}</span>. A slug
+          can be used once.
         </>
       }
     >

@@ -198,11 +198,79 @@ pub fn validate_slug(slug: &str) -> ValidationResult {
     Ok(())
 }
 
-/// The account a launch asset is deployed to, e.g. `genesis-ft.orbit-factory.testnet`.
-pub fn launch_account_id(slug: &str, suffix: &str, factory: &AccountId) -> ValidationResult<AccountId> {
-    format!("{slug}-{suffix}.{factory}")
+/// The account a launch is deployed to, e.g. `genesis.orbit-factory.testnet`.
+pub fn launch_account_id(slug: &str, factory: &AccountId) -> ValidationResult<AccountId> {
+    format!("{slug}.{factory}")
         .parse()
         .map_err(|_| format!("'{slug}' produces an invalid account ID under {factory}"))
+}
+
+/// The parts of one launch. A launch has a token, a collection, or both; with
+/// both it also has holder claims, a gated sale, or both.
+#[derive(Clone, Copy)]
+pub struct LaunchParts<'a> {
+    pub token: Option<&'a TokenConfig>,
+    pub collection: Option<&'a CollectionConfig>,
+    pub claim: Option<&'a ClaimConfig>,
+    pub sale: Option<&'a SaleConfig>,
+}
+
+/// Validates every part and how they fit together. Claim and sale reserves
+/// are held by the launch account itself, so the token must allocate exactly
+/// their sum to `launch_account` (and nothing when there is neither).
+/// Returns the claim reserve.
+pub fn validate_launch(parts: LaunchParts, launch_account: &AccountId) -> ValidationResult<u128> {
+    if let Some(token) = parts.token {
+        validate_token_config(token)?;
+    }
+    if let Some(collection) = parts.collection {
+        validate_collection_config(collection)?;
+    }
+    let (claim_reserve, sale_total) = match (parts.token, parts.collection) {
+        (None, None) => return Err("a launch needs a token, a collection, or both".into()),
+        (Some(token), Some(collection)) => {
+            if parts.claim.is_none() && parts.sale.is_none() {
+                return Err("a connected launch needs holder claims, a gated sale, or both".into());
+            }
+            let claim_reserve = match parts.claim {
+                Some(claim) => validate_claim_config(claim, collection.supply)?,
+                None => 0,
+            };
+            let sale_total = match parts.sale {
+                Some(sale) => {
+                    validate_sale_config(sale, collection.supply)?;
+                    if sale_cost(sale.total_for_sale.0, sale.price_per_token.0, token.decimals).is_none() {
+                        return Err("the full sale value does not fit in a NEAR amount".into());
+                    }
+                    sale.total_for_sale.0
+                }
+                None => 0,
+            };
+            (claim_reserve, sale_total)
+        }
+        _ if parts.claim.is_some() || parts.sale.is_some() => {
+            return Err("holder claims and gated sales need both a token and a collection".into())
+        }
+        _ => (0, 0),
+    };
+
+    let reserve = claim_reserve.checked_add(sale_total).ok_or("reserves overflow")?;
+    let allocated: u128 = parts
+        .token
+        .map(|t| t.allocations.iter().filter(|a| &a.account_id == launch_account).map(|a| a.amount.0).sum())
+        .unwrap_or(0);
+    if allocated != reserve {
+        return Err(if reserve == 0 {
+            format!(
+                "the token cannot allocate to the launch account {launch_account}; tokens there are locked"
+            )
+        } else {
+            format!(
+                "the token must allocate exactly {reserve} to {launch_account} to fund claims and the sale"
+            )
+        });
+    }
+    Ok(claim_reserve)
 }
 
 pub fn validate_sale_config(config: &SaleConfig, supply: Supply) -> ValidationResult {

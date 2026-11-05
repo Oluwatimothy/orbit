@@ -9,6 +9,8 @@ Each entry records what was decided, why, and what was given up. Later changes a
 **Why:** this is the project brief; there is no audit and no real value at stake.
 
 ### D-002 · Factory with one account per asset, using global contracts (NEP-591)
+> **Superseded by D-026.** Kept for history.
+
 **Decision:** the factory creates `<slug>-ft`, `<slug>-nft` and `<slug>-claim` subaccounts that reference token, NFT and claim code published once as global contracts (by hash).
 **Why:** each asset is an ordinary, independently addressable contract that wallets, explorers and other dApps already understand. Referencing a global contract costs < 0.001 NEAR per account, against ≈ 1–3 NEAR of storage per copy if each launch held its own wasm. Referencing by **hash** (not by account) makes deployed code immutable.
 **Alternatives:**
@@ -79,6 +81,8 @@ Each entry records what was decided, why, and what was given up. Later changes a
 **Why:** only one TypeScript application exists. Shared Rust validation lives in a `common` crate used by every contract.
 
 ### D-016 · Global contract publishing cost, measured
+> **Superseded by D-026.** Kept for history.
+
 **Decision:** keep NEP-591 global contracts (D-002) after measuring the optimised builds.
 **Measured (cargo-near 0.22, `opt-level = "z"`, LTO):**
 | Contract | Size |
@@ -103,6 +107,8 @@ Publishing the three templates burns ≈ 68 testnet NEAR once.
 **Revisit when:** the registry grows past a few hundred launches. Then use FastNEAR holdings to choose which contracts to read.
 
 ### D-019 · Sandbox-only global-contract publisher
+> **Superseded by D-026.** Kept for history.
+
 **Decision:** `contracts/test-support/global-publisher` publishes code via `Promise::deploy_global_contract` in integration tests.
 **Why:** `near-workspaces` 0.24 has no API for the `DeployGlobalContract` action. The helper is never deployed to testnet; testnet publishing uses `near contract deploy-as-global`.
 
@@ -111,6 +117,8 @@ Publishing the three templates burns ≈ 68 testnet NEAR once.
 **Why:** the references (Hyperliquid, Lighter) are dark-first. A second theme doubles the visual QA surface for little benefit in this scope. Contrast checks were made against the dark tokens.
 
 ### D-021 · NFT-gated sale as a separate contract (supersedes "Phase 4b planned")
+> **Superseded by D-026.** Kept for history.
+
 **Decision:** `contracts/sale` implements the second relationship type:
 - a holder window with a per-NFT limit, ownership verified by cross-contract call at purchase time;
 - an optional public window with a per-account limit;
@@ -131,6 +139,8 @@ A connected launch takes `claim?` and `sale?`, at least one required. The token 
 **Decision:** the "Minting now / Not minting" filter calls `orbit_config` and `orbit_mint_stats` on each live collection, and only while the filter is active. This keeps the registry the only list and the contracts the only source of mint state.
 
 ### D-025 · Storage is always paid by whoever causes it (from the contract review)
+> **Amended by D-026:** the principle stands. Claims and purchases are now synchronous, so the rejection fees and the 80 Tgas deploy callback no longer apply, and quotes changed.
+
 **Decision:**
 - The sale and NFT contracts measure the storage each call adds and keep it from the caller's deposit.
 - Sale records that drop to zero are deleted.
@@ -139,3 +149,24 @@ A connected launch takes `claim?` and `sale?`, at least one required. The token 
 
 **Why:** a keyless contract that pays for storage it cannot recover can be drained until outgoing refunds fail, which would lock funds permanently. The fees make griefing cost something without affecting honest users, and are disclosed in the UI.
 **Related:** the deploy callback now reserves 80 Tgas; the registry allowance in quotes is 0.1 NEAR. Quotes are 0.35 NEAR (token), 0.40 NEAR (collection) and up to 0.85 NEAR (connected), with unused parts refunded.
+
+### D-026 · One launch contract per launch, deployed from a template the factory stores (supersedes D-002, D-016, D-019, D-021)
+**Context:** publishing four global contracts burns about 91 testnet NEAR (D-016). The project owner has a 10 NEAR faucet account and cannot obtain more.
+
+**Decision:**
+- Token, collection, holder claims and gated sale are modules of **one** contract, `contracts/launch`. Each launch is a single keyless account, `<slug>.<factory>`, that has whichever parts the creator chose.
+- The factory stores that wasm (407 kB) in raw storage through owner-only `set_template`. It deploys a copy with `create_account → transfer → deploy_contract → new` in one atomic receipt.
+- Claim and sale reserves are minted at launch to the launch account itself. The token must allocate to it exactly the claim tiers' total plus the sale total.
+
+**Why:**
+- **Operator cost.** Storage is staked at 0.00001 NEAR per byte; global publishing burns 0.0001. The factory needs about 6.9 NEAR in total instead of about 96.
+- **Simpler, stronger claims and purchases.** Ownership checks and token transfers happen inside one contract. A claim or purchase is a single receipt that either completes or reverts entirely, so there are no pending states, rollbacks, rejection fees or activation step. Measured storage is charged to the caller, and the excess deposit is refunded.
+- **Standards unchanged.** The account still implements NEP-141/145/148 and NEP-171/177/178/181. Wallets and explorers read it like any token or collection contract.
+
+**Trade-off:** each launch now locks its own copy of the code, so a launch costs about 4.37 NEAR instead of 0.35–0.85 NEAR. A creator with a 10 NEAR faucet account can make two launches. If the operator later has about 41 NEAR, publishing the template as a global contract and having the factory use it would bring launches back under 0.5 NEAR without changing the launch contract.
+
+**Verified:** the sandbox suite deploys the real template through the factory. It covers:
+- the code each launch account runs is byte-identical to the template;
+- the largest launch the limits allow uses 13.8 kB of state against a 20 kB allowance;
+- a connected launch's creation burns 79 Tgas;
+- a failed launch is refunded even when the factory has only 0.5 NEAR to spare, because the failed batch's deposit returns before the callback runs.

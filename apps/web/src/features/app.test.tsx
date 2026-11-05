@@ -23,7 +23,8 @@ function launch(id: number, overrides: Partial<Launch> = {}): Launch {
     creator: "creator.testnet",
     created_at_ns: BigInt(id),
     status: "live",
-    token: `launch-${id}-ft.f.testnet`,
+    account: `launch-${id}.f.testnet`,
+    token: `launch-${id}.f.testnet`,
     nft: null,
     claim: null,
     sale: null,
@@ -90,12 +91,10 @@ describe("activity descriptions", () => {
       describeActivity(
         item({
           method: "claim",
-          events: [
-            { standard: "orbit", version: "1.0.0", event: "claim_rejected", data: [{ nft_token_id: "9" }] },
-          ],
+          events: [{ standard: "orbit", version: "1.0.0", event: "claim", data: [{ nft_token_id: "9" }] }],
         }),
       ),
-    ).toBe("Claim rejected for NFT #9");
+    ).toBe("Claimed for NFT #9");
     expect(describeActivity(item({ method: "create_connected_launch" }))).toBe("Created connected launch");
   });
 });

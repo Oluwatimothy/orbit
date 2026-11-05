@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["common", "fungible-token", "nft-collection", "claim", "sale", "factory", "test-support/global-publisher", "integration-tests"]
+members = ["common", "launch", "factory", "integration-tests"]
 
 [workspace.package]
 edition = "2021"

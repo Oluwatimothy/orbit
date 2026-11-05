@@ -1,4 +1,5 @@
-// Prints the NEP-591 global contract hash (base58 SHA-256) of a wasm file.
+// Prints the code hash (base58 SHA-256) of a wasm file, as NEAR explorers and
+// the factory's `get_config().template.hash` show it.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 

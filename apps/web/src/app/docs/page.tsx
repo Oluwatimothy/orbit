@@ -11,15 +11,21 @@ const SECTIONS: Array<{ id: string; title: string; body: ReactNode }> = [
       <>
         <p>
           You sign one transaction to the Orbit factory. The factory checks your configuration with the same
-          rules the contracts use, records the launch in its on-chain registry, and creates one account per
-          asset — <code>&lt;slug&gt;-ft</code>, <code>&lt;slug&gt;-nft</code> and, for connected launches,{" "}
-          <code>&lt;slug&gt;-claim</code> — under the factory account.
+          rules the contract uses, records the launch in its on-chain registry, and creates one account for it
+          — <code>&lt;slug&gt;.&lt;factory&gt;</code>. That single contract is the token, the collection, or
+          both, together with any holder claims and gated sale.
         </p>
         <p>
-          Each account runs contract code that was published once as a NEAR global contract (NEP-591) and is
-          referenced by its hash, so the code cannot change. Creating the account, attaching the code and
-          initialising it happen in a single atomic receipt: if initialisation fails, the account is never
-          created and its balance is refunded.
+          The factory stores one launch contract template and deploys a copy of it to each new account. The
+          template&apos;s SHA-256 hash is public in the factory&apos;s configuration and matches the code hash
+          explorers show for every launch account. Creating the account, deploying the code and initialising
+          it happen in a single atomic receipt: if initialisation fails, the account is never created and its
+          balance is refunded.
+        </p>
+        <p>
+          The launch deposit pays for storing that code and the launch&apos;s own data on its account (about
+          4.4 testnet NEAR). It stays locked with the keyless account. The unused part of the registry
+          allowance is refunded.
         </p>
         <p>
           Launch accounts have no access keys. Nobody — not you, not Orbit — can upgrade them, re-initialise
@@ -65,23 +71,24 @@ const SECTIONS: Array<{ id: string; title: string; body: ReactNode }> = [
     body: (
       <>
         <p>
-          A connected launch reserves part of the token supply in a claim contract. The factory refuses the
-          launch unless the token allocates exactly the amount the claim tiers require, and the claim contract
-          only opens after reading its own token balance and confirming it covers the reserve.
+          A connected launch reserves part of the token supply for holders. The token, the collection and the
+          reserve live in the same contract: the reserve is minted at launch to the launch account itself, and
+          the contract refuses to initialise unless that allocation equals exactly what the claim tiers and
+          the sale require.
         </p>
-        <p>To claim for NFT #n, the claim contract:</p>
+        <p>To claim for NFT #n, the contract, in one step:</p>
         <ol>
-          <li>rejects the call if NFT #n already has a claim record (claimed or in progress);</li>
-          <li>records the claim as pending;</li>
-          <li>asks the collection contract who owns NFT #n;</li>
+          <li>rejects the call if NFT #n is in no tier, or already has a claim record;</li>
           <li>
-            if the caller is not the owner, deletes the record and refunds the deposit minus 0.001 NEAR;
+            reads the owner of NFT #n from its own collection and rejects the call unless it is the caller;
           </li>
-          <li>otherwise registers the caller with the token and transfers the tier amount;</li>
-          <li>
-            marks the claim complete only after the transfer succeeds — or deletes the record if it failed.
-          </li>
+          <li>records the claim and transfers the tier amount from the reserve to the caller;</li>
+          <li>keeps the storage this added (about 0.003 NEAR) from the deposit and refunds the rest.</li>
         </ol>
+        <p>
+          These happen in a single receipt with no cross-contract calls, so a claim either completes entirely
+          or changes nothing. There is no &ldquo;in progress&rdquo; state to get stuck in.
+        </p>
       </>
     ),
   },
@@ -91,16 +98,16 @@ const SECTIONS: Array<{ id: string; title: string; body: ReactNode }> = [
     body: (
       <>
         <p>
-          A connected launch can also reserve tokens in a sale contract. During the holder window, only the
-          current owner of an NFT can buy, up to a fixed amount per NFT ID; the sale contract asks the
-          collection contract who owns the NFT on every purchase. An optional public window then lets any
-          account buy up to a per-account limit.
+          A connected launch can also reserve tokens for a gated sale. During the holder window, only the
+          current owner of an NFT can buy, up to a fixed amount per NFT ID; ownership is read from the
+          collection on every purchase. An optional public window then lets any account buy up to a
+          per-account limit.
         </p>
         <p>
-          Each purchase reserves its amount before any cross-contract call, so limits and supply hold even
-          when many purchases are in flight. The creator is paid in the same transaction, after the tokens
-          reach the buyer. A purchase rejected because the caller does not own the NFT keeps 0.001 NEAR. After
-          the sale ends, the creator can reclaim unsold tokens.
+          Like claims, a purchase is a single step: the ownership check, the limit update, the token transfer
+          and the payment to the creator happen together or not at all. Claims and the sale draw on separate
+          counters, so neither can spend the other&apos;s share of the reserve. After the sale ends, the
+          creator can reclaim unsold tokens.
         </p>
       </>
     ),
@@ -147,7 +154,7 @@ const SECTIONS: Array<{ id: string; title: string; body: ReactNode }> = [
         <li>Testnet only. Assets have no monetary value.</li>
         <li>The contracts are tested but have not been audited.</li>
         <li>
-          The factory owner can change which code future launches use, and pause new launches. Existing
+          The factory owner can change the template future launches use, and pause new launches. Existing
           launches are unaffected.
         </li>
         <li>

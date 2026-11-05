@@ -94,20 +94,20 @@ export const nft = {
 };
 
 export const claim = {
-  info: (id: string) => read(claimInfoSchema, id, "get_info"),
+  info: (id: string) => read(claimInfoSchema, id, "claim_info"),
   claims: (id: string, nftTokenIds: string[]) =>
-    read(z.array(claimRecordSchema.nullable()), id, "get_claims", { nft_token_ids: nftTokenIds }),
+    read(z.array(claimRecordSchema.nullable()), id, "claim_records", { nft_token_ids: nftTokenIds }),
 };
 
 export const sale = {
-  info: (id: string) => read(saleInfoSchema, id, "get_info"),
-  quote: (id: string, amount: bigint) => read(u128String, id, "quote", { amount: amount.toString() }),
+  info: (id: string) => read(saleInfoSchema, id, "sale_info"),
+  quote: (id: string, amount: bigint) => read(u128String, id, "sale_quote", { amount: amount.toString() }),
   purchasedByNft: (id: string, nftTokenIds: string[]) =>
     Promise.all(
       nftTokenIds.map((nftTokenId) =>
-        read(u128String, id, "get_purchased_by_nft", { nft_token_id: nftTokenId }),
+        read(u128String, id, "sale_purchased_by_nft", { nft_token_id: nftTokenId }),
       ),
     ),
   purchasedByAccount: (id: string, accountId: string) =>
-    read(u128String, id, "get_purchased_by_account", { account_id: accountId }),
+    read(u128String, id, "sale_purchased_by_account", { account_id: accountId }),
 };

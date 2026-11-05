@@ -65,7 +65,7 @@ export async function fetchHoldings(accountId: string, launches: Launch[]) {
         claim.claims(launch.claim, tokenIds.slice(0, 50)),
       ]);
       const inTier = (id: string) => info.tiers.some((t) => t.from <= Number(id) && Number(id) <= t.to);
-      const claimed = records.filter((r) => r?.state === "claimed").length;
+      const claimed = records.filter((r) => r !== null).length;
       const claimable = tokenIds.slice(0, 50).filter((id, i) => inTier(id) && !records[i]).length;
       return { launch, nftId, tokenIds, claimable, claimed };
     },
