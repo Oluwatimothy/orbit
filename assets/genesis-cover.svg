@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
+  <rect width="600" height="600" fill="#0a0a0b"/>
+  <g fill="none" stroke="#232327" stroke-width="1">
+    <circle cx="300" cy="280" r="210"/>
+    <circle cx="300" cy="280" r="150"/>
+    <circle cx="300" cy="280" r="90"/>
+  </g>
+  <path d="M441.4 138.6A200 200 0 1 0 500 280" fill="none" stroke="#ede9df" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="476.8" cy="191.6" r="22" fill="#ede9df"/>
+  <circle cx="300" cy="280" r="26" fill="#ede9df"/>
+  <text x="300" y="545" fill="#ede9df" font-family="Inter, Helvetica, Arial, sans-serif" font-size="30" font-weight="600" letter-spacing="9" text-anchor="middle">ORBIT GENESIS</text>
+</svg>

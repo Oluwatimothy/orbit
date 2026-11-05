@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+/*
+ * Orbit design tokens. Dark, monochrome, one warm off-white for primary
+ * actions; colour is reserved for meaning (positive, negative, caution).
+ */
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
+
+  --color-canvas: #0a0a0b;
+  --color-surface: #111113;
+  --color-raised: #17171a;
+  --color-overlay: #1d1d21;
+  --color-line: #232327;
+  --color-line-strong: #303036;
+
+  --color-ink: #f2f0eb;
+  --color-ink-muted: #a3a19b;
+  --color-ink-faint: #75736e;
+  --color-ink-inverse: #0a0a0b;
+
+  --color-primary: #ede9df;
+  --color-primary-hover: #ffffff;
+
+  --color-positive: #4cb88a;
+  --color-positive-soft: #4cb88a1f;
+  --color-negative: #e5636a;
+  --color-negative-soft: #e5636a1f;
+  --color-caution: #d8a74a;
+  --color-caution-soft: #d8a74a1f;
+
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 20px;
+  --text-base: 14px;
+  --text-base--line-height: 22px;
+
+  --animate-fade-in: fade-in 160ms ease-out;
+  --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pulse-soft {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    background: var(--color-canvas);
+  }
+
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: var(--color-primary);
+    color: var(--color-ink-inverse);
+  }
+
+  :focus-visible {
+    outline: 1.5px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}

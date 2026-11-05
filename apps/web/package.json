@@ -1,0 +1,56 @@
+{
+  "name": "@orbit/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "check:secrets": "node scripts/check-client-secrets.mjs"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "7.0.3",
+    "@hot-labs/near-connect": "0.12.0",
+    "@tanstack/react-query": "5.106.1",
+    "clsx": "2.1.1",
+    "lucide-react": "1.69.0",
+    "near-api-js": "7.4.0",
+    "next": "16.4.5",
+    "radix-ui": "1.8.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-hook-form": "7.91.0",
+    "sonner": "2.0.8",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@tailwindcss/postcss": "4.3.4",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.8",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "eslint": "10.14.0",
+    "eslint-config-next": "16.4.5",
+    "jsdom": "30.1.3",
+    "prettier": "3.9.10",
+    "tailwindcss": "4.3.4",
+    "typescript": "6.0.3",
+    "vitest": "5.1.0"
+  }
+}
