@@ -70,7 +70,7 @@ pub struct SaleInfo {
     contract_state,
     contract_metadata(
         version = "0.1.0",
-        link = "https://github.com/orbit-launch/orbit",
+        link = "https://github.com/Oluwatimothy/orbit",
         standard(standard = "nep297", version = "1.0.0"),
         standard(standard = "nep330", version = "1.2.0"),
     )

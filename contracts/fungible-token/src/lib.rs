@@ -25,7 +25,7 @@ enum StorageKey {
     contract_state,
     contract_metadata(
         version = "0.1.0",
-        link = "https://github.com/orbit-launch/orbit",
+        link = "https://github.com/Oluwatimothy/orbit",
         standard(standard = "nep141", version = "1.0.0"),
         standard(standard = "nep145", version = "1.0.0"),
         standard(standard = "nep148", version = "1.0.0"),

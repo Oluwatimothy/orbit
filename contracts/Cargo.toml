@@ -6,7 +6,7 @@ members = ["common", "fungible-token", "nft-collection", "claim", "sale", "facto
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
-repository = "https://github.com/orbit-launch/orbit"
+repository = "https://github.com/Oluwatimothy/orbit"
 
 [workspace.dependencies]
 near-sdk = "=5.30.0"
