@@ -22,6 +22,7 @@ export function ReviewDialog({
   title,
   items,
   deposit,
+  depositProblem = null,
   consequences,
   state,
   onConfirm,
@@ -31,6 +32,8 @@ export function ReviewDialog({
   title: string;
   items: ReviewItem[];
   deposit: bigint | null;
+  /** Why the deposit cannot be quoted, if it cannot. */
+  depositProblem?: string | null;
   consequences: string[];
   state: TransactionState;
   onConfirm: () => void;
@@ -65,7 +68,7 @@ export function ReviewDialog({
             ))}
             <KeyValue label="Deposit attached">
               <span className="tabular font-medium">
-                {deposit === null ? "Loading…" : formatNear(deposit)}
+                {deposit !== null ? formatNear(deposit) : depositProblem ? "Unavailable" : "Loading…"}
               </span>
             </KeyValue>
           </dl>
@@ -75,6 +78,12 @@ export function ReviewDialog({
               <li key={c}>{c}</li>
             ))}
           </ul>
+
+          {deposit === null && depositProblem && (
+            <div className="mt-4">
+              <Notice tone="negative">{depositProblem}</Notice>
+            </div>
+          )}
 
           {state.phase === "failed" && (
             <div className="mt-4">

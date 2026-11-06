@@ -46,7 +46,7 @@ export function CreateTokenPage() {
   const values = useWatch({ control }) as TokenForm;
   const [slugEdited, setSlugEdited] = useState(false);
   const [reviewing, setReviewing] = useState(false);
-  const { quote, submit, state, reset } = useCreateLaunch("token");
+  const { quote, quoteProblem, submit, state, reset } = useCreateLaunch("token");
 
   const decimals = Number.isInteger(values.decimals) ? values.decimals : 0;
   const allocation = resolveAllocations(values.totalSupply ?? "", decimals, values.allocations ?? []);
@@ -180,6 +180,7 @@ export function CreateTokenPage() {
         title={`Launch ${values.symbol}`}
         state={state}
         deposit={quote.data ?? null}
+        depositProblem={quoteProblem}
         items={[
           { label: "Name", value: values.name },
           { label: "Symbol", value: <span className="tabular">{values.symbol}</span> },

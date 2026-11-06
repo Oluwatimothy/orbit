@@ -39,5 +39,12 @@ export function useCreateLaunch(kind: LaunchKind) {
     if (typeof created?.id === "number") router.push(`/launches/${created.id}`);
   }
 
-  return { quote, submit, state: tx.state, reset: tx.reset };
+  // Without a quote the launch cannot be signed, so say why instead of loading forever.
+  const quoteProblem = !network.factoryId
+    ? "No launch factory is configured for this site (NEXT_PUBLIC_ORBIT_FACTORY), so launches cannot be submitted."
+    : quote.isError
+      ? `Could not load the deposit from the factory: ${quote.error.message}`
+      : null;
+
+  return { quote, quoteProblem, submit, state: tx.state, reset: tx.reset };
 }

@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Check } from "lucide-react";
 import { useState, type BaseSyntheticEvent } from "react";
-import { useForm, useWatch, type UseFormRegister } from "react-hook-form";
+import { useForm, useWatch, type FieldErrors, type UseFormRegister } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
 import { KeyValue } from "@/components/ui/data";
@@ -97,7 +97,8 @@ export function CreateConnectedPage() {
   const [done, setDone] = useState([false, false, false]);
   const [slugEdited, setSlugEdited] = useState(false);
   const [reviewing, setReviewing] = useState(false);
-  const { quote, submit, state, reset } = useCreateLaunch("connected");
+  const [blocked, setBlocked] = useState<string | null>(null);
+  const { quote, quoteProblem, submit, state, reset } = useCreateLaunch("connected");
 
   const collectionForm = useForm<CollectionForm>({
     resolver: zodResolver(collectionFormSchema),
@@ -178,12 +179,22 @@ export function CreateConnectedPage() {
     tokenForm.setValue("description", collection.description || "-");
     return submitToken(event);
   };
-  const submitToken = tokenForm.handleSubmit(() => {
-    if (allocation.error || relationshipError) return;
-    setDone([true, true, true]);
-    reset();
-    setReviewing(true);
-  });
+  const submitToken = tokenForm.handleSubmit(
+    () => {
+      // Holder rules can become invalid after that step, e.g. when the supply changes.
+      const problem = relationshipError
+        ? `Holder rules: ${relationshipError}`
+        : allocation.error && allocation.unallocated > 0n
+          ? `${formatUnits(allocation.unallocated, decimals)} ${token.symbol} is unallocated. Allocations must add up to the total supply: raise an amount, add a row, or lower the supply.`
+          : allocation.error;
+      setBlocked(problem);
+      if (problem) return;
+      setDone([true, true, true]);
+      reset();
+      setReviewing(true);
+    },
+    (errors) => setBlocked(describeTokenErrors(errors)),
+  );
 
   function launch() {
     void submit(
@@ -394,10 +405,21 @@ export function CreateConnectedPage() {
             <Button variant="ghost" onClick={() => setStep(1)}>
               Back
             </Button>
-            <Button type="submit" variant="primary" disabled={!accountId}>
-              Review launch
-            </Button>
+            {accountId ? (
+              <Button type="submit" variant="primary">
+                Review launch
+              </Button>
+            ) : (
+              <Button variant="primary" onClick={() => void connect()}>
+                Connect wallet to review
+              </Button>
+            )}
           </div>
+          {blocked && (
+            <p role="alert" className="pt-3 text-right text-xs text-negative">
+              {blocked}
+            </p>
+          )}
         </form>
       )}
 
@@ -407,6 +429,7 @@ export function CreateConnectedPage() {
         title={`Launch ${collection.name} + ${token.symbol}`}
         state={state}
         deposit={quote.data ?? null}
+        depositProblem={quoteProblem}
         items={[
           {
             label: "Collection",
@@ -450,6 +473,17 @@ export function CreateConnectedPage() {
       />
     </CreateLayout>
   );
+}
+
+/** The first problem with the token step, including fields copied from the collection step. */
+function describeTokenErrors(errors: FieldErrors<TokenForm>): string {
+  if (errors.slug) return `Launch slug (Collection step): ${errors.slug.message}`;
+  if (errors.description) return `Project description (Collection step): ${errors.description.message}`;
+  const row = errors.allocations?.findIndex?.((e) => e !== undefined) ?? -1;
+  const rowError = row >= 0 ? errors.allocations?.[row] : undefined;
+  const rowMessage = rowError?.label?.message ?? rowError?.accountId?.message ?? rowError?.value?.message;
+  if (rowMessage) return `Allocation ${row + 1}: ${rowMessage}`;
+  return "Fix the highlighted fields above.";
 }
 
 function Toggle({

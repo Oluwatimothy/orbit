@@ -85,6 +85,9 @@ export function AllocationEditor({
                       aria-label={`Allocation ${index + 1} label`}
                       aria-invalid={Boolean(rowError?.label)}
                     />
+                    {rowError?.label && (
+                      <p className="mt-1 text-2xs text-negative">{rowError.label.message}</p>
+                    )}
                   </td>
                   <td className="px-1.5 py-2">
                     <Input

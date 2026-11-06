@@ -33,7 +33,7 @@ export function CreateCollectionPage() {
   const values = useWatch({ control }) as CollectionForm;
   const [slugEdited, setSlugEdited] = useState(false);
   const [reviewing, setReviewing] = useState(false);
-  const { quote, submit, state, reset } = useCreateLaunch("collection");
+  const { quote, quoteProblem, submit, state, reset } = useCreateLaunch("collection");
   const price = tryParseUnits(values.price ?? "", YOCTO_DECIMALS);
 
   const onReview = handleSubmit(() => {
@@ -115,6 +115,7 @@ export function CreateCollectionPage() {
         title={`Launch ${values.name}`}
         state={state}
         deposit={quote.data ?? null}
+        depositProblem={quoteProblem}
         items={[
           { label: "Collection", value: `${values.name} (${values.symbol})` },
           {
